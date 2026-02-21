@@ -31,3 +31,18 @@
 - Write batches are available via `db.batch()` and are useful for atomic updates across multiple keyspaces.
 - `uuid` crate needs the `serde` feature to be used with `serde_json` or `bincode`.
 - `bincode` is efficient for serializing `Vec<f32>` for storage.
+
+## Matryoshka Slicing Logic (2026-02-21)
+- Matryoshka embeddings (like `nomic-embed-text-v1.5`) allow for truncation while preserving representational power.
+- Re-normalization (L2) is CRITICAL after slicing to ensure the vector remains on the unit hypersphere for cosine similarity.
+- Implementation uses `&[f32]` for flexibility and returns `Result<Vec<f32>, String>` to handle dimension mismatches.
+- L2 norm calculation: `sqrt(sum(x_i^2))`.
+- Re-normalization: `v_i / norm`.
+- Handled edge case where norm is zero (all-zero vector) to avoid division by zero.
+
+## Nomic Model Integration (Candle)
+- Implemented `NomicModel` using `candle-transformers` BERT implementation.
+- Nomic Embed Text v1.5 requires mean pooling and L2 normalization for optimal performance.
+- Used `tokenizers` crate for text processing.
+- Device selection (CPU/GPU) is handled via `candle_core::Device`.
+- Weights are loaded using `mmaped_safetensors` for efficiency.
