@@ -4,6 +4,15 @@ use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
 use std::path::Path;
 use tokenizers::Tokenizer;
+pub trait Embedder {
+    fn encode(&self, text: &str) -> Result<Vec<f32>>;
+}
+
+impl Embedder for NomicModel {
+    fn encode(&self, text: &str) -> Result<Vec<f32>> {
+        self.encode(text)
+    }
+}
 
 pub struct NomicModel {
     model: BertModel,
