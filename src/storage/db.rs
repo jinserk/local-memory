@@ -86,6 +86,10 @@ impl Database {
 
         Ok(())
     }
+
+    pub fn bit_index_iter(&self) -> impl Iterator<Item = fjall::Result<(fjall::Slice, fjall::Slice)>> {
+        self.bit_index.iter().map(|guard| guard.into_inner())
+    }
 }
 
 #[cfg(test)]
