@@ -14,9 +14,10 @@ pub fn full_rerank(
 
     for &id in candidate_ids {
         if let Some(memory) = db.get_memory(id)? {
-            let distance = SpatialSimilarity::cos(query_vector, &memory.vector).ok_or_else(|| {
-                anyhow::anyhow!("Failed to calculate cosine distance for ID: {}", id)
-            })?;
+            let distance =
+                SpatialSimilarity::cos(query_vector, &memory.vector).ok_or_else(|| {
+                    anyhow::anyhow!("Failed to calculate cosine distance for ID: {}", id)
+                })?;
 
             let similarity = 1.0 - distance as f32;
 
@@ -37,6 +38,7 @@ pub fn full_rerank(
 mod tests {
     use super::*;
     use crate::storage::db::{Database, Memory};
+    use crate::storage::MemoryTier;
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -53,6 +55,8 @@ mod tests {
             metadata: meta1.clone(),
             vector: v1.clone(),
             bit_vector: vec![],
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let v2 = vec![0.0, 1.0, 0.0];
@@ -63,6 +67,8 @@ mod tests {
             metadata: meta2.clone(),
             vector: v2.clone(),
             bit_vector: vec![],
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let query = vec![1.0, 0.1, 0.0];

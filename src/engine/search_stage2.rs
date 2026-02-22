@@ -17,11 +17,13 @@ pub fn matryoshka_refinement(
 
     for &id in candidate_ids {
         if let Some(memory) = db.get_memory(id)? {
-            let sliced_candidate = slice_vector(&memory.vector, target_dim).map_err(anyhow::Error::msg)?;
+            let sliced_candidate =
+                slice_vector(&memory.vector, target_dim).map_err(anyhow::Error::msg)?;
 
-            let distance = SpatialSimilarity::cos(&sliced_query, &sliced_candidate).ok_or_else(|| {
-                anyhow::anyhow!("Failed to calculate cosine distance for ID: {}", id)
-            })?;
+            let distance =
+                SpatialSimilarity::cos(&sliced_query, &sliced_candidate).ok_or_else(|| {
+                    anyhow::anyhow!("Failed to calculate cosine distance for ID: {}", id)
+                })?;
 
             let similarity = 1.0 - distance as f32;
 
@@ -42,6 +44,7 @@ pub fn matryoshka_refinement(
 mod tests {
     use super::*;
     use crate::storage::db::{Database, Memory};
+    use crate::storage::MemoryTier;
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -58,6 +61,8 @@ mod tests {
             metadata: json!({}),
             vector: v1,
             bit_vector: vec![],
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let mut v2 = vec![0.0; 768];
@@ -68,6 +73,8 @@ mod tests {
             metadata: json!({}),
             vector: v2,
             bit_vector: vec![],
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let mut query = vec![0.0; 768];

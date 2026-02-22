@@ -31,6 +31,7 @@ pub fn hamming_scan(db: &Database, query_bits: &[u8], k: usize) -> Result<Vec<Se
 mod tests {
     use super::*;
     use crate::storage::db::Memory;
+    use crate::storage::MemoryTier;
     use tempfile::tempdir;
 
     #[test]
@@ -46,6 +47,8 @@ mod tests {
             metadata: serde_json::json!({}),
             vector: vec![1.0, 1.0],
             bit_vector: vec![0b11110000],
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         db.insert_memory(&Memory {
@@ -53,6 +56,8 @@ mod tests {
             metadata: serde_json::json!({}),
             vector: vec![-1.0, -1.0],
             bit_vector: vec![0b00001111],
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let query = vec![0b11110000];
@@ -84,6 +89,8 @@ mod tests {
                 metadata: serde_json::json!({}),
                 vector: vec![0.0; vector_dim],
                 bit_vector,
+                tier: MemoryTier::default(),
+                expires_at: None,
             })?;
         }
 

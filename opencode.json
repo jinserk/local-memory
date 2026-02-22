@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "local-memory": {
+      "type": "local",
+      "command": ["/home/jinserk/work/private/local-memory/target/release/local-memory"],
+      "enabled": true,
+      "environment": {
+        "LOCAL_MEMORY_CONFIG": "/home/jinserk/work/private/local-memory/local-memory.json"
+      }
+    }
+  }
+}

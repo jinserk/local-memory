@@ -1,0 +1,17 @@
+{
+  "storage_path": "/home/jinserk/work/private/local-memory/storage",
+  "model_path": "/home/jinserk/work/private/local-memory/models",
+  "search_stages": {
+    "stage1_k": 100,
+    "stage2_k": 10
+  },
+  "tier": {
+    "default_tier": "Semantic",
+    "default_episodic_ttl_seconds": 3600
+  },
+  "model": {
+    "name": "nomic-ai/nomic-embed-text-v1.5",
+    "provider": "huggingface",
+    "auto_download": true
+  }
+}

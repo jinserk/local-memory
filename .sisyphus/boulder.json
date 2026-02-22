@@ -2,7 +2,13 @@
   "active_plan": "/home/jinserk/work/private/local-memory/.sisyphus/plans/rust-local-memory.md",
   "started_at": "2026-02-21T18:36:30.065Z",
   "session_ids": [
-    "ses_37e924f7effeXZAwEiKEHmJPQu"
+    "ses_37e924f7effeXZAwEiKEHmJPQu",
+    "ses_37e3a0dd7ffeS93iTMvmHttQGx",
+    "ses_37e380c1effec86kqEP6rxusVF",
+    "ses_37dd9c6bcffebpqP7r8tMTsaqX",
+    "ses_37dd6517bffeEgGFDLGJcyS2ot",
+    "ses_37dd565beffee71C94mTB7zPHT",
+    "ses_37d75b095ffeJvfFzYaTxTBRjY"
   ],
   "plan_name": "rust-local-memory",
   "agent": "atlas"

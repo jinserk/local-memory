@@ -1,4 +1,5 @@
 use crate::storage::schema::{PARTITION_BIT_INDEX, PARTITION_METADATA, PARTITION_VECTORS};
+use crate::storage::tier::{is_expired, MemoryTier};
 use anyhow::Result;
 use fjall::{Database as FjallDatabase, Keyspace, KeyspaceCreateOptions};
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,17 @@ pub struct Memory {
     pub metadata: serde_json::Value,
     pub vector: Vec<f32>,
     pub bit_vector: Vec<u8>,
+    #[serde(default)]
+    pub tier: MemoryTier,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MemoryEntry {
+    pub metadata: serde_json::Value,
+    pub tier: MemoryTier,
+    pub expires_at: Option<u64>,
 }
 
 pub struct Database {
@@ -39,11 +51,16 @@ impl Database {
     pub fn insert_memory(&self, memory: &Memory) -> Result<()> {
         let id_bytes = memory.id.as_bytes();
 
-        let metadata_bytes = serde_json::to_vec(&memory.metadata)?;
+        let entry = MemoryEntry {
+            metadata: memory.metadata.clone(),
+            tier: memory.tier,
+            expires_at: memory.expires_at,
+        };
+        let entry_bytes = serde_json::to_vec(&entry)?;
         let vector_bytes = bincode::serialize(&memory.vector)?;
 
         let mut batch = self.db.batch();
-        batch.insert(&self.metadata, id_bytes, metadata_bytes);
+        batch.insert(&self.metadata, id_bytes, entry_bytes);
         batch.insert(&self.vectors, id_bytes, vector_bytes);
         batch.insert(&self.bit_index, id_bytes, &memory.bit_vector);
         batch.commit()?;
@@ -60,16 +77,22 @@ impl Database {
 
         match (metadata_res, vector_res, bit_index_res) {
             (Some(m), Some(v), Some(b)) => {
-                let metadata = serde_json::from_slice(&m)?;
+                let entry: MemoryEntry = serde_json::from_slice(&m)?;
                 let vector = bincode::deserialize(&v)?;
                 let bit_vector = b.to_vec();
 
-                Ok(Some(Memory {
-                    id,
-                    metadata,
-                    vector,
-                    bit_vector,
-                }))
+                if is_expired(entry.expires_at) {
+                    Ok(None)
+                } else {
+                    Ok(Some(Memory {
+                        id,
+                        metadata: entry.metadata,
+                        vector,
+                        bit_vector,
+                        tier: entry.tier,
+                        expires_at: entry.expires_at,
+                    }))
+                }
             }
             _ => Ok(None),
         }
@@ -90,6 +113,10 @@ impl Database {
     pub fn bit_index_iter(&self) -> impl Iterator<Item = fjall::Result<(fjall::Slice, fjall::Slice)>> {
         self.bit_index.iter().map(|guard| guard.into_inner())
     }
+
+    pub fn metadata_iter(&self) -> impl Iterator<Item = fjall::Result<(fjall::Slice, fjall::Slice)>> {
+        self.metadata.iter().map(|guard| guard.into_inner())
+    }
 }
 
 #[cfg(test)]
@@ -108,6 +135,8 @@ mod tests {
             metadata: serde_json::json!({"text": "hello world"}),
             vector: vec![1.0, 2.0, 3.0],
             bit_vector: vec![0b10101010],
+            tier: MemoryTier::Semantic,
+            expires_at: None,
         };
 
         db.insert_memory(&memory)?;

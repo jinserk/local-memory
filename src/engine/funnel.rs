@@ -68,6 +68,7 @@ impl<'a> SearchFunnel<'a> {
 mod tests {
     use super::*;
     use crate::storage::db::Memory;
+    use crate::storage::MemoryTier;
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -88,6 +89,8 @@ mod tests {
             metadata: json!({"text": "perfect match"}),
             vector: v1.clone(),
             bit_vector: encode_bq(&v1),
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let mut v2 = vec![0.0; dim];
@@ -98,6 +101,8 @@ mod tests {
             metadata: json!({"text": "partial match"}),
             vector: v2.clone(),
             bit_vector: encode_bq(&v2),
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let mut v3 = vec![0.0; dim];
@@ -108,6 +113,8 @@ mod tests {
             metadata: json!({"text": "no match"}),
             vector: v3.clone(),
             bit_vector: encode_bq(&v3),
+            tier: MemoryTier::default(),
+            expires_at: None,
         })?;
 
         let mut query = vec![0.0; dim];

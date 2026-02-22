@@ -30,6 +30,8 @@ impl IngestionPipeline {
             metadata,
             vector,
             bit_vector,
+            tier: crate::storage::MemoryTier::default(),
+            expires_at: None,
         };
 
         self.db.insert_memory(&memory)?;
