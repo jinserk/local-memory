@@ -46,15 +46,15 @@ impl ModelDownloader {
 
         let missing = Self::missing_files(target_dir);
         if missing.is_empty() {
-            println!("All model files already present in {:?}", target_dir);
+            eprintln!("All model files already present in {:?}", target_dir);
             return Ok(());
         }
 
-        println!(
+        eprintln!(
             "Downloading model '{}' to {:?}",
             self.model_name, target_dir
         );
-        println!("Missing files: {}", missing.join(", "));
+        eprintln!("Missing files: {}", missing.join(", "));
 
         // Create a progress bar for overall progress
         let total_files = MODEL_FILES.len();
@@ -79,7 +79,7 @@ impl ModelDownloader {
         }
 
         main_pb.finish_with_message("Download complete");
-        println!();
+        eprintln!();
 
         Ok(())
     }
@@ -151,7 +151,7 @@ pub fn ensure_model_files(model_name: &str, model_path: &Path, auto_download: bo
         );
     }
 
-    println!("Model files not found. Starting download...");
+    eprintln!("Model files not found. Starting download...");
     let downloader = ModelDownloader::new(model_name);
     downloader.download(model_path)?;
 

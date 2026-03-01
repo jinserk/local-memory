@@ -47,9 +47,9 @@ impl McpServerProcess {
         let config = json!({
             "storage_path": temp_dir.path().to_string_lossy(),
             "model_path": get_model_path()?,
-            "search_stages": {
-                "stage1_k": 100,
-                "stage2_k": 50
+            "embedding_model": {
+                "name": "nomic-ai/nomic-embed-text-v1.5",
+                "auto_download": true
             }
         });
 
@@ -290,7 +290,7 @@ fn test_memory_insert() -> Result<()> {
         assert!(content[0]["text"]
             .as_str()
             .unwrap()
-            .contains("Memory inserted with ID:"));
+            .contains("Memory inserted and knowledge graph updated."));
     }
 
     Ok(())

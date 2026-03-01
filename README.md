@@ -1,25 +1,24 @@
-# Local Memory
+# Local Memory (GraphRAG)
 
-A high-performance local semantic memory system with MCP (Model Context Protocol) integration. Store, search, and retrieve memories using vector embeddings, all running locally on your machine.
+A high-performance local GraphRAG (Graph Retrieval-Augmented Generation) system with MCP (Model Context Protocol) integration. Inspired by the **EdgeQuake** project and the **LightRAG** algorithm, this system extracts knowledge graphs from your documents to enable multi-hop reasoning and sophisticated memory retrieval, all running locally on your machine.
 
 ## Features
 
-- **Semantic Search**: Find relevant memories using natural language queries
-- **Multi-stage Search Funnel**: Optimized 3-stage search pipeline combining speed and accuracy
-  - Stage 1: Binary quantization with SIMD-accelerated Hamming distance (~16x faster than scalar)
-  - Stage 2: Matryoshka embedding refinement (256d vectors)
-  - Stage 3: Full vector re-ranking (768d vectors)
-- **MCP Protocol Support**: Works with OpenCode, Claude-code, and other MCP-compatible clients
-- **Memory Tiering**: Episodic (temporary) and Semantic (permanent) memory storage
-- **CLI Diagnostics**: Built-in tools for inspecting and testing your memory database
-- **Local-first**: Everything runs on your machine, no cloud dependencies
+- **GraphRAG Engine**: Beyond simple vector similarity, it extracts entities and relationships to build a structured Knowledge Graph.
+- **Hybrid Search**: Combines traditional vector similarity with graph traversal for context-rich retrieval.
+- **SQLite Storage**: Uses SQLite with the `sqlite-vec` extension for unified, efficient storage of documents, entities, relationships, and embeddings.
+- **Local LLM Integration**: Uses `edgequake-llm` to interface with local providers (like Ollama) or cloud APIs (OpenAI) for entity extraction.
+- **MCP Protocol Support**: Native support for Model Context Protocol, making it compatible with OpenCode, Claude Desktop, Cursor, and other AI agents.
+- **lmcli Tool**: A powerful CLI for inspecting, testing, and exploring your local knowledge graph.
+- **Local-first**: Privacy-focused design where everything runs on your hardware.
 
 ## Installation
 
 ### Prerequisites
 
-- Rust 1.75+ (2024 edition)
-- Nomic Embed Text v1.5 model files
+- Rust 1.80+ (2024 edition)
+- Nomic Embed Text v1.5 model files (for local embeddings)
+- `sqlite3` installed on your system
 
 ### Build from Source
 
@@ -29,183 +28,95 @@ cd local-memory
 cargo build --release
 ```
 
-### Download Model
-
-The system requires Nomic Embed Text v1.5 model files. Download them to the `models/` directory:
-
-```bash
-mkdir -p models
-# Download config.json, tokenizer.json, and model.safetensors to models/
-```
-
 ## Quick Start
 
-### Running the MCP Server
+### 1. Initialize and Test
+Run the diagnostic test to create your local database and verify the system:
+```bash
+./target/release/lmcli test
+```
 
+### 2. Running the MCP Server
+Spawning the server for use with an AI agent:
 ```bash
 # Using default configuration
 cargo run --release
 
-# With custom config file
-LOCAL_MEMORY_CONFIG=/path/to/config.json cargo run --release
+# With an LLM provider enabled for entity extraction
+OPENAI_API_KEY=your_key_here cargo run --release
 ```
 
-The MCP server communicates via stdio using JSON-RPC 2.0. It's designed to be spawned by MCP clients.
+The MCP server communicates via stdio using JSON-RPC 2.0.
 
-### CLI Diagnostics
-
-The `mem-diag` binary provides diagnostic tools:
+### 3. CLI Exploration
+The `lmcli` binary provides tools to inspect your memory:
 
 ```bash
-# Show memory statistics
-cargo run --release --bin mem-diag -- stats
+# Show database statistics
+./target/release/lmcli stats
 
-# Search memories
-cargo run --release --bin mem-diag -- search "your query here"
+# List extracted entities
+./target/release/lmcli list-entities
 
-# Inspect a specific memory
-cargo run --release --bin mem-diag -- inspect <uuid>
+# List knowledge graph relationships
+./target/release/lmcli list-relations
 
-# Run diagnostic tests
-cargo run --release --bin mem-diag -- test
+# Perform a hybrid search
+./target/release/lmcli search "How does X relate to Y?"
 ```
 
-## Usage
+## MCP Tools
 
-### MCP Integration
+Local Memory exposes several tools to AI agents:
 
-Local Memory implements the MCP v1.0 specification with two primary tools:
-
-#### memory_insert
-
-Insert a new memory into the database:
-
+#### `memory_insert`
+Ingests text, generates embeddings, and extracts knowledge graph entities/relationships.
 ```json
 {
   "name": "memory_insert",
   "arguments": {
-    "text": "The user prefers dark mode in their editor",
-    "metadata": {
-      "category": "preference",
-      "source": "conversation"
-    }
+    "text": "Alice is a software engineer at Acme Corp.",
+    "metadata": { "title": "Employee Directory" }
   }
 }
 ```
 
-#### memory_search
-
-Search for relevant memories:
-
+#### `memory_search`
+Performs a hybrid search across vectors and the knowledge graph.
 ```json
 {
   "name": "memory_search",
   "arguments": {
-    "query": "editor preferences",
+    "query": "Who works at Acme Corp?",
     "top_k": 5
   }
 }
 ```
 
-### Configuration
-
-Create a `config.json` file or set `LOCAL_MEMORY_CONFIG` environment variable:
-
+#### `graph_get_neighborhood`
+Explores the immediate connections of a specific entity in the graph.
 ```json
 {
-  "storage_path": "storage",
-  "model_path": "models",
-  "search_stages": {
-    "stage1_k": 100,
-    "stage2_k": 10
-  },
-  "tier": {
-    "default_tier": "Semantic",
-    "default_episodic_ttl_seconds": 3600
-  }
+  "name": "graph_get_neighborhood",
+  "arguments": { "entity_name": "Acme Corp" }
 }
 ```
 
-#### Configuration Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `storage_path` | Directory for storing memories | `storage` |
-| `model_path` | Directory containing model files | `models` |
-| `search_stages.stage1_k` | Candidates from Hamming scan | `100` |
-| `search_stages.stage2_k` | Candidates from Matryoshka refinement | `10` |
-| `tier.default_tier` | Default memory tier (`Semantic` or `Episodic`) | `Semantic` |
-| `tier.default_episodic_ttl_seconds` | TTL for episodic memories in seconds | `3600` |
-
-### Memory Tiers
-
-- **Semantic**: Permanent memories that persist until explicitly deleted
-- **Episodic**: Temporary memories that expire after a configured TTL
-
-Expired episodic memories are automatically filtered out during retrieval.
-
-## Performance
-
-Benchmarks on a typical development machine:
-
-| Operation | Time |
-|-----------|------|
-| Ingestion (per document) | ~14 microseconds |
-| Search (1000 vectors) | ~282 microseconds |
-| SIMD Hamming (768-bit) | ~3.2 nanoseconds |
-| Memory per document | ~3.2 KB |
-
-The 3-stage search funnel provides excellent balance between speed and recall:
-- Stage 1 scans all memories in microseconds using binary vectors
-- Stage 2 refines with higher-precision Matryoshka embeddings
-- Stage 3 provides final ranking with full cosine similarity
-
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed system architecture.
+Local Memory uses a modular architecture:
+- **Storage Layer**: SQLite + `sqlite-vec` for relational and vector data.
+- **Ingestion Pipeline**: Text -> Embedding -> LLM Entity Extraction -> Graph Storage.
+- **Search Funnel**: Query -> Vector Search -> Graph Traversal -> Context Fusion.
 
-## MCP Integration Guide
-
-See [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md) for integration with OpenCode, Claude-code, and other MCP clients.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more details.
 
 ## Development
 
 ### Running Tests
-
 ```bash
-# Unit tests
-cargo test
-
-# Benchmarks
-cargo bench
-
-# E2E tests (requires model files)
-cargo test --test mcp_e2e_test
-```
-
-### Project Structure
-
-```
-src/
-  main.rs           # MCP server entry point
-  cli.rs            # CLI implementation
-  config.rs         # Configuration handling
-  engine/
-    bq.rs           # Binary quantization
-    funnel.rs       # Search funnel coordinator
-    ingestion.rs    # Document ingestion pipeline
-    matryoshka.rs   # Matryoshka embedding slicing
-    search_stage1.rs # Hamming distance scan
-    search_stage2.rs # Matryoshka refinement
-    search_stage3.rs # Full re-ranking
-  model/
-    nomic.rs        # Nomic embedding model
-  storage/
-    db.rs           # Database operations
-    schema.rs       # Data schemas
-    tier.rs         # Memory tiering
-  mcp/
-    tools.rs        # MCP tool implementations
+# Run GraphRAG integration tests
+cargo test --test edgequake_integration_test
 ```
 
 ## License

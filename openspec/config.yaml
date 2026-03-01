@@ -2,191 +2,120 @@ schema: spec-driven
 
 # Project context
 context: |
-  Project: local-memory - High-performance local semantic memory system with MCP integration
+  Project: local-memory - High-performance local GraphRAG memory system with MCP integration
   
   Description:
-    A Rust-based semantic memory system that stores, searches, and retrieves memories
-    using vector embeddings. Features a 3-stage search funnel with SIMD-accelerated
-    binary quantization, Matryoshka refinement, and full re-ranking.
+    A Rust-based GraphRAG memory system that stores, searches, and retrieves memories
+    using a combination of vector embeddings and Knowledge Graph traversal.
+    Features hybrid retrieval with SQLite and sqlite-vec.
 
   Tech Stack:
     - Language: Rust 2024 edition
     - Package Manager: Cargo
     - Build System: cargo build, cargo build --release
     - Testing: cargo test, criterion benchmarks
-    - Linting/Formatting: cargo clippy, rustfmt
+    - Database: SQLite with sqlite-vec extension
+    - LLM Integration: edgequake-llm for entity/relationship extraction
 
   Key Dependencies:
-    - candle-core/nn/transformers: ML framework for embedding model
-    - fjall: LSM-tree based persistent storage
+    - rusqlite: SQLite driver with bundled support
+    - sqlite-vec: Vector search extension for SQLite
+    - edgequake-llm: Unified LLM provider interface
+    - candle-core/nn/transformers: Local embedding model execution
     - tokio: Async runtime
-    - simsimd: SIMD-accelerated similarity computations
-    - tokenizers: BPE tokenization (HuggingFace compatible)
     - uuid: Unique identifiers
-    - bincode: Binary serialization
-    - clap: CLI argument parsing
     - serde/serde_json: JSON serialization
+    - clap: CLI argument parsing
 
   Embedding Model:
     - Nomic Embed Text v1.5
     - 768-dimensional vectors
-    - Matryoshka representation learning support
-    - Files: config.json, tokenizer.json, model.safetensors
+    - Local execution via Candle
 
   Project Structure:
     - src/ - Main source code
       - main.rs - MCP server entry point
-      - cli.rs - CLI implementation
+      - cli.rs - CLI implementation (lmcli)
       - config.rs - Configuration handling
       - lib.rs - Library root
-      - bin/mem-diag.rs - Diagnostic binary
+      - bin/lmcli.rs - CLI binary
       - engine/ - Core processing logic
-        - bq.rs - Binary quantization
-        - funnel.rs - Search funnel coordinator
-        - ingestion.rs - Document ingestion pipeline
-        - matryoshka.rs - Matryoshka embedding slicing
-        - search_stage1.rs - Hamming distance scan
-        - search_stage2.rs - Matryoshka refinement
-        - search_stage3.rs - Full re-ranking
+        - ingestion.rs - GraphRAG ingestion pipeline (Text -> Vector + KG)
+        - funnel.rs - Hybrid search coordinator (Vector + Graph)
       - model/ - Embedding model
         - nomic.rs - Nomic model implementation
         - downloader.rs - Model download utility
       - storage/ - Persistence layer
-        - db.rs - Database operations
-        - schema.rs - Data schemas
-        - tier.rs - Memory tiering (semantic/episodic)
+        - sqlite.rs - SQLite storage with sqlite-vec integration
+        - mod.rs - Storage module exports
       - mcp/ - MCP protocol implementation
         - tools.rs - MCP tool implementations
     - tests/ - Integration tests
-      - mcp_e2e_test.rs - End-to-end MCP tests
-      - recall_bench.rs - Recall benchmarks
-      - tier_test.rs - Tier functionality tests
-    - benches/ - Criterion benchmarks
-      - search_bench.rs - Search performance benchmarks
-    - models/ - Model files (gitignored)
-    - storage/ - Database files (gitignored)
+      - edgequake_integration_test.rs - Comprehensive GraphRAG flow tests
     - docs/ - Documentation
       - ARCHITECTURE.md - System architecture
       - MCP_INTEGRATION.md - MCP client integration guide
     - openspec/ - OpenSpec specifications
     - .opencode/ - OpenCode MCP config and skills
     - .gemini/ - Gemini CLI skills and commands
-    - local-memory.json - Main configuration file
-    - opencode.json - OpenCode MCP server configuration
 
-  Search Architecture (3-Stage Funnel):
-    - Stage 1: Binary quantization with SIMD Hamming distance (~16x faster)
-    - Stage 2: Matryoshka embedding refinement (256d vectors)
-    - Stage 3: Full vector re-ranking (768d vectors)
-
-  Memory Tiers:
-    - Semantic: Permanent memories (preferences, learned facts)
-    - Episodic: TTL-based temporary memories (session data)
+  Retrieval Architecture (Hybrid Funnel):
+    - Vector Search: KNN search against document embeddings using sqlite-vec.
+    - Graph Expansion: Traversing entities and relationships to find related context.
+    - Context Fusion: Merging text chunks and graph triplets for final response.
 
   MCP/Client Integration:
     Target Agent Environments:
-      - OpenCode (primary): MCP server via opencode.json config
-      - Claude Code: MCP stdio integration
-      - Gemini CLI: .gemini/skills/ and .gemini/commands/ integration
+      - OpenCode (primary): MCP server configuration
+      - Claude Desktop: MCP stdio integration
+      - Gemini CLI: Skills and commands integration
 
-    MCP Configuration:
-      - Config file: local-memory.json (storage_path, model_path, search_stages, tier, model settings)
-      - Environment variable: LOCAL_MEMORY_CONFIG for custom config path
-      - MCP server config: opencode.json with command path and environment
+    MCP Tools:
+      - memory_insert: Ingest text and extract Knowledge Graph data.
+      - memory_search: Hybrid vector and graph search.
+      - graph_get_neighborhood: Explore entity connections.
 
-    Skills/Plugins:
-      - OpenCode: .opencode/skills/openspec-*/ - OpenSpec workflow skills
-      - OpenCode: .opencode/command/opsx-*.md - OpenSpec command definitions
-      - Gemini CLI: .gemini/skills/openspec-*/ - OpenSpec workflow skills
-      - Gemini CLI: .gemini/commands/opsx/*.toml - OpenSpec command definitions
-
-    CLI Diagnostics Tool (mem-diag):
-      - mem-diag stats: Show memory statistics (total, semantic, episodic, expired)
-      - mem-diag search <query>: Search memories with mock embeddings
-      - mem-diag inspect <uuid>: Inspect specific memory details
-      - mem-diag test: Run diagnostic tests (insert, search, delete)
-
-    Model Auto-Downloader:
-      - Source: HuggingFace (https://huggingface.co/{model_name}/resolve/main)
-      - Model: nomic-ai/nomic-embed-text-v1.5
-      - Files: config.json, tokenizer.json, model.safetensors
-      - Config option: model.auto_download: true/false
-      - Implementation: src/model/downloader.rs
-
-    Installation Directory Settings:
-      - Default storage: storage/ (database files)
-      - Default models: models/ (embedding model files)
-      - Override via config or LOCAL_MEMORY_CONFIG env var
+    CLI Tool (lmcli):
+      - lmcli stats: Show database statistics and entity counts.
+      - lmcli list-entities: List extracted Knowledge Graph entities.
+      - lmcli list-relations: List Knowledge Graph relationships.
+      - lmcli search <query>: Perform hybrid search.
+      - lmcli test: Run diagnostic self-tests.
 
   Conventions:
     - Use cargo for all build and dependency management
     - Run `cargo build --release` for optimized builds
     - Run `cargo test` for unit and integration tests
-    - Run `cargo bench` for criterion benchmarks
-    - Run `cargo clippy` for linting
-    - Run `cargo fmt` for formatting
     - Model files must be present in models/ directory
     - MCP server communicates via stdio using JSON-RPC 2.0
+    - Knowledge Graph extraction requires a configured LLM (e.g., OPENAI_API_KEY)
 
 # Per-artifact rules
 rules:
   # General rules for all artifacts
   general:
     - "CRITICAL: All OpenSpec commands MUST be run from project root"
-    - "NEVER run openspec commands with 'cd subdirectory &&' prefix - always execute from root"
-    - All OpenSpec artifacts (specs, proposals, plans, tasks) MUST be located in openspec/ at project root
-    - Do NOT create specs, proposals, plans, or task documents in subdirectories
+    - All OpenSpec artifacts MUST be located in openspec/ at project root
     - The openspec/ directory is the single canonical location for all specification artifacts
     - Keep specifications in sync with implementation changes
-    - Rust code must pass `cargo clippy` without warnings
     - All public APIs must have documentation comments
 
   # Consistency and cleanup workflow
   consistency:
-    - Every time OpenSpec is triggered, check openspec/changes/ directory for active changes
     - Verify that specs and plans in openspec/ are consistent with current implementation
     - Check for outdated or obsolete specifications that no longer match reality
-    - "Ask user to confirm if cleanup is needed before proceeding: Make specs consistent with current implementation, Remove outdated/obsolete specs and plans, Clean up documentation in openspec/"
-    - When syncing changes to main specs (openspec/sync), also sync to main spec docs
-    - "During sync operations, always check for: Consistency between specs and implementation, Obsolete specifications that can be archived or removed, Documentation that needs updating or cleanup"
     - Keep openspec/ directory clean, consistent, and up-to-date at all times
 
   proposal:
-    - Keep proposals focused and under 1000 words
     - Always include "Goals" and "Non-goals" sections
-    - Consider performance impact on the 3-stage search funnel
-    - Consider memory tiering implications for new features
+    - Consider impact on hybrid search performance and SQLite storage
 
   spec:
     - Follow OpenSpec structure for all specifications
-    - Document performance characteristics and trade-offs
-    - Include any new dependencies and their rationale
+    - Document Knowledge Graph schema changes and hybrid search logic
     - Keep specs as living documents - update when implementation evolves
-    - Before creating or updating specs, check existing specs for consistency
-    - Archive or remove specs that are obsolete or superseded
-    - Reference src/ module structure when describing components
-
-  plan:
-    - Implementation plans must follow OpenSpec planning standards
-    - Break work into logical phases
-    - Identify which src/ modules will be modified
-    - Consider impact on MCP protocol compatibility
-    - Verify plans are consistent with current specs before implementation
-    - Update or archive plans that are no longer relevant
-    - Include testing strategy (unit tests, integration tests, benchmarks)
-
-  sync:
-    - When syncing changes from openspec/changes/ to main specs, perform consistency check
-    - Update main spec documentation in parallel with spec updates
-    - Identify and flag obsolete specs during sync operations
-    - Prompt user to confirm cleanup actions (remove/archive outdated specs and docs)
-    - Ensure main specs accurately reflect current implementation after sync
-    - Keep openspec/ clean by archiving completed changes after sync
 
   tasks:
     - Task definitions must adhere to OpenSpec task format
-    - Reference specific src/ modules when applicable
-    - Keep tasks focused and testable (max 4 hours of work)
-    - Include testing requirements for each task
     - Run `cargo test` after code changes
     - Run `cargo clippy` to catch issues early

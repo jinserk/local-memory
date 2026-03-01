@@ -4,14 +4,9 @@ use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
 use std::path::Path;
 use tokenizers::Tokenizer;
+
 pub trait Embedder {
     fn encode(&self, text: &str) -> Result<Vec<f32>>;
-}
-
-impl Embedder for NomicModel {
-    fn encode(&self, text: &str) -> Result<Vec<f32>> {
-        self.encode(text)
-    }
 }
 
 pub struct NomicModel {
@@ -20,30 +15,8 @@ pub struct NomicModel {
     device: Device,
 }
 
-impl NomicModel {
-    pub fn load(
-        config_path: impl AsRef<Path>,
-        tokenizer_path: impl AsRef<Path>,
-        weights_path: impl AsRef<Path>,
-        device: &Device,
-    ) -> Result<Self> {
-        let config_str = std::fs::read_to_string(config_path)?;
-        let config: Config = serde_json::from_str(&config_str)?;
-        let tokenizer = Tokenizer::from_file(tokenizer_path).map_err(anyhow::Error::msg)?;
-
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[weights_path], candle_core::DType::F32, device)?
-        };
-        let model = BertModel::load(vb, &config)?;
-
-        Ok(Self {
-            model,
-            tokenizer,
-            device: device.clone(),
-        })
-    }
-
-    pub fn encode(&self, text: &str) -> Result<Vec<f32>> {
+impl Embedder for NomicModel {
+    fn encode(&self, text: &str) -> Result<Vec<f32>> {
         let tokens = self
             .tokenizer
             .encode(text, true)
@@ -63,6 +36,63 @@ impl NomicModel {
 
         let result = normalized_embeddings.squeeze(0)?.to_vec1::<f32>()?;
         Ok(result)
+    }
+}
+
+impl NomicModel {
+    pub fn load(
+        config_path: impl AsRef<Path>,
+        tokenizer_path: impl AsRef<Path>,
+        weights_path: impl AsRef<Path>,
+        device: &Device,
+    ) -> Result<Self> {
+        let config_str = std::fs::read_to_string(config_path)?;
+        
+        // Nomic 1.5 has non-standard BERT config field names
+        let mut config_val: serde_json::Value = serde_json::from_str(&config_str)?;
+        let map = config_val.as_object_mut().ok_or_else(|| anyhow::anyhow!("Invalid config.json"))?;
+        
+        // Map Nomic fields to standard BERT fields if missing
+        if !map.contains_key("hidden_size") && map.contains_key("n_embd") {
+            map.insert("hidden_size".to_string(), map["n_embd"].clone());
+        }
+        if !map.contains_key("num_attention_heads") && map.contains_key("n_head") {
+            map.insert("num_attention_heads".to_string(), map["n_head"].clone());
+        }
+        if !map.contains_key("num_hidden_layers") && map.contains_key("n_layer") {
+            map.insert("num_hidden_layers".to_string(), map["n_layer"].clone());
+        }
+        if !map.contains_key("intermediate_size") && map.contains_key("n_inner") {
+            map.insert("intermediate_size".to_string(), map["n_inner"].clone());
+        }
+        if !map.contains_key("max_position_embeddings") && map.contains_key("n_positions") {
+            map.insert("max_position_embeddings".to_string(), map["n_positions"].clone());
+        }
+        if !map.contains_key("hidden_act") && map.contains_key("activation_function") {
+            map.insert("hidden_act".to_string(), map["activation_function"].clone());
+        }
+
+        let config: Config = serde_json::from_value(config_val)?;
+        let tokenizer = Tokenizer::from_file(tokenizer_path).map_err(anyhow::Error::msg)?;
+
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&[weights_path], candle_core::DType::F32, device)?
+        };
+        let model = BertModel::load(vb, &config)?;
+
+        Ok(Self {
+            model,
+            tokenizer,
+            device: device.clone(),
+        })
+    }
+}
+
+pub struct MockEmbedder;
+
+impl Embedder for MockEmbedder {
+    fn encode(&self, _text: &str) -> Result<Vec<f32>> {
+        Ok(vec![0.0; 768])
     }
 }
 
