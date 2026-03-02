@@ -14,6 +14,8 @@ pub use ollama::pull_ollama_model;
 
 /// Unified factory to get a complete UnifiedModel (Embedding + LLM)
 pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>> {
+    let mut prepare_list = Vec::new();
+
     // 1. Resolve Embedder
     let embedder: Arc<dyn EmbeddingProvider> = match config.embedding.provider {
         ModelProvider::HuggingFace => {
@@ -26,9 +28,8 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
         ModelProvider::Ollama => {
             let host = config.embedding.base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
             if config.embedding.auto_download {
-                let _ = pull_ollama_model(&host, &config.embedding.name).await;
+                prepare_list.push((config.embedding.name.clone(), host.clone()));
             }
-            // CRITICAL: For Ollama embedding provider, we MUST set the embedding_model
             Arc::new(OllamaProvider::builder()
                 .host(host)
                 .embedding_model(&config.embedding.name)
@@ -45,7 +46,7 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
             ExtractorProvider::Ollama => {
                 let host = ext_config.base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
                 if ext_config.auto_download {
-                    let _ = pull_ollama_model(&host, &ext_config.name).await;
+                    prepare_list.push((ext_config.name.clone(), host.clone()));
                 }
                 Arc::new(OllamaProvider::builder()
                     .host(host)
@@ -81,9 +82,7 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
     Ok(Arc::new(GenericUnifiedModel {
         llm,
         embedder,
-        auto_download: true,
-        model_name: "Unified".to_string(),
-        base_url: None,
+        prepare_list,
     }))
 }
 

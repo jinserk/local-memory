@@ -2,9 +2,15 @@
   "mcpServers": {
     "local-memory": {
       "command": "cargo",
-      "args": ["run", "--release"],
+      "args": [
+        "run",
+        "--quiet",
+        "--release",
+        "--bin",
+        "local-memory"
+      ],
       "env": {
-        "LOCAL_MEMORY_CONFIG": ".local-memory/config.json"
+        "LOCAL_MEMORY_CONFIG": "${PROJECT_PATH}/.local-memory/config.json"
       }
     }
   }

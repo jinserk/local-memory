@@ -14,9 +14,8 @@ pub trait UnifiedModel: LLMProvider + EmbeddingProvider {
 pub struct GenericUnifiedModel {
     pub llm: Arc<dyn LLMProvider>,
     pub embedder: Arc<dyn EmbeddingProvider>,
-    pub auto_download: bool,
-    pub model_name: String,
-    pub base_url: Option<String>,
+    /// List of (model_name, base_url) to pull via Ollama during prepare()
+    pub prepare_list: Vec<(String, String)>,
 }
 
 #[async_trait]
@@ -49,15 +48,8 @@ impl EmbeddingProvider for GenericUnifiedModel {
 #[async_trait]
 impl UnifiedModel for GenericUnifiedModel {
     async fn prepare(&self) -> Result<()> {
-        if !self.auto_download {
-            return Ok(());
-        }
-
-        // Handle Ollama specific pulling
-        if self.llm.name() == "ollama" {
-            if let Some(url) = &self.base_url {
-                crate::model::ollama::pull_ollama_model(url, &self.model_name).await?;
-            }
+        for (model_name, host) in &self.prepare_list {
+            crate::model::ollama::pull_ollama_model(host, model_name).await?;
         }
         Ok(())
     }
