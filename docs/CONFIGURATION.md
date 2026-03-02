@@ -8,15 +8,15 @@ Local Memory is configured using a `.local-memory/config.json` file located in t
 {
   "storage_path": ".local-memory/storage",
   "model_path": ".local-memory/models",
-  "embedding_model": {
+  "embedding": {
     "name": "nomic-ai/nomic-embed-text-v1.5",
     "provider": "huggingface",
-    "auto_download": true
+    "auto_download": true,
+    "dimension": 768
   },
   "llm_extractor": {
-    "provider": "ollama",
-    "model": "llama3.2:3b",
-    "base_url": "http://localhost:11434"
+    "provider": "huggingface",
+    "name": "phi-3-mini-4k-instruct"
   }
 }
 ```
@@ -28,9 +28,7 @@ Local Memory is configured using a `.local-memory/config.json` file located in t
 | `storage_path` | `.local-memory/storage` | Path where the SQLite database and Graph data are stored. |
 | `model_path` | `.local-memory/models` | Path where local embedding model files (BERT/Nomic) are cached. |
 
-**Tip**: You can point `storage_path` to an absolute path like `/home/user/.config/local-memory` to share memory across multiple projects.
-
-## 2. Embedding Model (`embedding_model`)
+## 2. Embedding Model (`embedding`)
 
 This model runs **locally** on your CPU using the Rust `candle` crate. It is responsible for turning text into vectors for semantic search.
 
@@ -39,34 +37,32 @@ This model runs **locally** on your CPU using the Rust `candle` crate. It is res
 | `name` | `nomic-ai/nomic-embed-text-v1.5` | The HuggingFace model ID. |
 | `provider` | `huggingface` | Where to fetch the model from (`huggingface` or `local`). |
 | `auto_download` | `true` | If true, missing model files will be downloaded on startup. |
+| `dimension` | `768` | Dimension of the vectors (must match the model architecture). |
 
 ## 3. LLM Extractor (`llm_extractor`)
 
-This model is responsible for **GraphRAG Reasoning**: extracting entities and relationships from text. It can be a local server (Ollama) or a remote API (OpenAI/Anthropic).
+This model is responsible for **GraphRAG Reasoning**: extracting entities and relationships from text.
 
 ### Local (Recommended for Privacy)
-Use **Ollama** to run models locally.
+Uses **Candle** or **Ollama**.
 ```json
 "llm_extractor": {
-  "provider": "ollama",
-  "model": "llama3.2:3b",
-  "base_url": "http://localhost:11434"
+  "provider": "huggingface",
+  "name": "phi-3-mini-4k-instruct"
 }
 ```
 
-### Remote (Fastest)
-Requires an API key (can be set in JSON or as an environment variable).
+### Remote
+Requires an API key.
 ```json
 "llm_extractor": {
   "provider": "openai",
-  "model": "gpt-4o",
+  "name": "gpt-4o",
   "api_key": "sk-..."
 }
 ```
 
 ## Environment Variables
-
-Configuration can be overridden or provided via environment variables:
 
 - `LOCAL_MEMORY_CONFIG`: Path to the config JSON file.
 - `OPENAI_API_KEY`: API key for OpenAI extraction (overrides config).

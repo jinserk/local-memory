@@ -36,6 +36,7 @@ impl Default for TierConfig {
 pub enum ModelProvider {
     HuggingFace,
     Local,
+    Ollama,
 }
 
 impl Default for ModelProvider {
@@ -46,16 +47,23 @@ impl Default for ModelProvider {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ModelConfig {
+    /// Model name or identifier
     pub name: String,
+    /// Provider of the model
     #[serde(default)]
     pub provider: ModelProvider,
+    /// Whether to automatically download missing model files
     #[serde(default = "default_auto_download")]
     pub auto_download: bool,
+    /// Dimension of vectors produced by this model
+    #[serde(default = "default_dimension")]
+    pub dimension: usize,
+    /// Optional base URL for the API (used for Ollama)
+    pub base_url: Option<String>,
 }
 
-fn default_auto_download() -> bool {
-    true
-}
+fn default_auto_download() -> bool { true }
+fn default_dimension() -> usize { 768 }
 
 impl Default for ModelConfig {
     fn default() -> Self {
@@ -63,6 +71,8 @@ impl Default for ModelConfig {
             name: "nomic-ai/nomic-embed-text-v1.5".to_string(),
             provider: ModelProvider::HuggingFace,
             auto_download: true,
+            dimension: 768,
+            base_url: None,
         }
     }
 }
@@ -74,13 +84,21 @@ pub enum ExtractorProvider {
     Anthropic,
     Gemini,
     Ollama,
+    HuggingFace,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ExtractorConfig {
+    /// Provider of the extractor
     pub provider: ExtractorProvider,
-    pub model: String,
+    /// Model name or identifier
+    pub name: String,
+    /// Whether to automatically download/pull missing model
+    #[serde(default = "default_auto_download")]
+    pub auto_download: bool,
+    /// Optional API key
     pub api_key: Option<String>,
+    /// Optional base URL for the API
     pub base_url: Option<String>,
 }
 
@@ -93,9 +111,11 @@ pub struct Config {
     #[serde(default)]
     pub tier: TierConfig,
     
-    #[serde(default, alias = "model")]
-    pub embedding_model: ModelConfig,
+    /// Embedding model configuration
+    #[serde(default, alias = "embedding_model", alias = "model")]
+    pub embedding: ModelConfig,
     
+    /// LLM extractor configuration for GraphRAG
     #[serde(default)]
     pub llm_extractor: Option<ExtractorConfig>,
 }
@@ -109,8 +129,14 @@ impl Default for Config {
             storage_path: default_storage_path(),
             model_path: default_model_path(),
             tier: TierConfig::default(),
-            embedding_model: ModelConfig::default(),
-            llm_extractor: None,
+            embedding: ModelConfig::default(),
+            llm_extractor: Some(ExtractorConfig {
+                provider: ExtractorProvider::HuggingFace,
+                name: "numind/NuExtract-1.5".to_string(),
+                auto_download: true,
+                api_key: None,
+                base_url: None,
+            }),
         }
     }
 }

@@ -1,22 +1,20 @@
 use crate::engine::funnel::SearchFunnel;
 use crate::engine::ingestion::IngestionPipeline;
-use crate::model::nomic::Embedder;
 use crate::storage::sqlite::SqliteDatabase;
-use edgequake_llm::LLMProvider;
+use crate::model::UnifiedModel;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub struct McpContext {
     pub db: Arc<SqliteDatabase>,
-    pub embedder: Arc<dyn Embedder + Send + Sync>,
-    pub llm: Option<Arc<dyn LLMProvider + Send + Sync>>,
+    pub model: Arc<dyn UnifiedModel>,
     pub config: crate::config::Config,
 }
 
 impl McpContext {
     pub fn get_pipeline(&self) -> IngestionPipeline {
-        IngestionPipeline::new(self.embedder.clone(), self.db.clone(), self.llm.clone())
+        IngestionPipeline::new(self.model.clone(), self.db.clone(), Some(self.model.clone()))
     }
 
     pub fn get_funnel(&self) -> SearchFunnel<'_> {
@@ -81,7 +79,9 @@ pub async fn call_tool(name: &str, arguments: Value, context: &McpContext) -> Re
                 .ok_or_else(|| anyhow!("Missing 'query' argument"))?;
             let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
-            let query_vector = context.embedder.encode(query)?;
+            let query_vector = context.model.embed_one(query).await
+                .map_err(|e| anyhow!("Embedding failed: {}", e))?;
+            
             let results = context.get_funnel().hybrid_search(&query_vector, top_k)?;
 
             let formatted_results: Vec<Value> = results.into_iter()

@@ -29,5 +29,6 @@ Thumbs.db
 tmp/
 
 # Others
+.gemini/
 sa-key.json
 .local-memory/

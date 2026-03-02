@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+bitvec = "1.0.1"
 candle-core = "0.9.2"
 candle-nn = "0.9.2"
 candle-transformers = "0.9.2"
@@ -25,10 +26,19 @@ sqlite-vec = "0.1.0"
 edgequake-llm = "0.2.1"
 zerocopy = { version = "0.8", features = ["derive"] }
 async-trait = "0.1.80"
+futures-util = "0.3.31"
 
 [dev-dependencies]
 tempfile = "3.17.1"
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[[test]]
+name = "unit_test"
+path = "tests/unit_test/mod.rs"
+
+[[test]]
+name = "integration_test"
+path = "tests/integration_test/mod.rs"
 
 [[bench]]
 name = "search_bench"

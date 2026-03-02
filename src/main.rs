@@ -1,14 +1,11 @@
 use anyhow::Result;
-use local_memory::config::Config;
 use local_memory::mcp::tools::{call_tool, list_tools, McpContext};
-use local_memory::model::nomic::{NomicModel, MockEmbedder, Embedder};
-use local_memory::model::downloader::ensure_model_files;
-use local_memory::model::llm::{get_llm_provider, check_llm_connectivity};
+use local_memory::model::{check_llm_connectivity, get_unified_model};
 use local_memory::storage::SqliteDatabase;
-use candle_core::Device;
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 use std::sync::Arc;
+use local_memory::config::Config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,15 +13,20 @@ async fn main() -> Result<()> {
 
     eprintln!("--- Local Memory Readiness Check ---");
 
-    // 1. Storage & Database Check
     if !config.storage_path.exists() {
         let _ = std::fs::create_dir_all(&config.storage_path);
     }
 
+    // 1. Initialize Unified Model (Handles both Embedding and Extractor)
+    let model = get_unified_model(&config).await?;
+    model.prepare().await?;
+    
+    // 2. Database Check
     let db_path = config.storage_path.join("local-memory.db");
-    let db = match SqliteDatabase::open(&db_path) {
+    let dimension = model.dimension();
+    let db = match SqliteDatabase::open(&db_path, dimension) {
         Ok(db) => {
-            eprintln!("  ✓ Database ready");
+            eprintln!("  ✓ Database ready (dimension: {})", dimension);
             Arc::new(db)
         },
         Err(e) => {
@@ -32,37 +34,18 @@ async fn main() -> Result<()> {
             return Err(e);
         }
     };
-    
-    let llm = get_llm_provider(&config);
 
-    if config.embedding_model.auto_download {
-        let _ = ensure_model_files(&config.embedding_model.name, &config.model_path, true);
-    }
-
-    let embedder: Arc<dyn Embedder + Send + Sync> = match load_model(&config.model_path) {
-        Ok(model) => {
-            eprintln!("  ✓ Local embedder loaded");
-            Arc::new(model)
-        },
-        Err(e) => {
-            eprintln!("  ! Warning: Local embedder load failed ({}). Using MockEmbedder.", e);
-            Arc::new(MockEmbedder)
-        }
-    };
-
-    if let Some(ref provider) = llm {
-        match check_llm_connectivity(provider.as_ref()).await {
-            Ok(_) => eprintln!("  ✓ LLM extractor connected"),
-            Err(e) => eprintln!("  ! Warning: LLM extractor check failed: {}.", e),
-        }
+    // 3. Connectivity check
+    match check_llm_connectivity(model.as_ref()).await {
+        Ok(_) => eprintln!("  ✓ LLM extractor ready"),
+        Err(e) => eprintln!("  ! Warning: LLM extractor check failed: {}.", e),
     }
 
     eprintln!("--- Readiness Check Complete ---\n");
 
     let context = Arc::new(McpContext {
         db,
-        embedder,
-        llm,
+        model,
         config,
     });
 
@@ -142,14 +125,4 @@ async fn handle_request(line: &str, context: &McpContext) -> Option<Value> {
             }
         }
     }
-}
-
-fn load_model(model_dir: &std::path::PathBuf) -> Result<NomicModel> {
-    let device = Device::Cpu;
-    NomicModel::load(
-        model_dir.join("config.json"),
-        model_dir.join("tokenizer.json"),
-        model_dir.join("model.safetensors"),
-        &device,
-    )
 }
