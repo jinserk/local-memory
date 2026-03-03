@@ -1,70 +1,80 @@
 # Configuration Guide
 
-Local Memory is configured using a `.local-memory/config.json` file located in the project root, or via the `LOCAL_MEMORY_CONFIG` environment variable.
+Local Memory is configured using a `.local-memory/config.json` file.
 
 ## Configuration Structure
+
+### Asymmetric Ollama Setup (Recommended)
+This setup uses one model for high-performance embeddings and another for high-precision reasoning.
 
 ```json
 {
   "storage_path": ".local-memory/storage",
   "model_path": ".local-memory/models",
   "embedding": {
-    "name": "nomic-ai/nomic-embed-text-v1.5",
-    "provider": "huggingface",
+    "name": "nomic-embed-text-v2-moe",
+    "provider": "ollama",
     "auto_download": true,
-    "dimension": 768
+    "dimension": 768,
+    "base_url": "http://localhost:11434"
   },
   "llm_extractor": {
-    "provider": "huggingface",
-    "name": "phi-3-mini-4k-instruct"
+    "provider": "ollama",
+    "name": "frob/nuextract-2.0:8b-q8_0",
+    "auto_download": true,
+    "base_url": "http://localhost:11434"
   }
 }
 ```
 
-## 1. Storage & Paths
+### Local-Only Setup (Candle)
+This setup runs entirely within the Rust process without external servers.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `storage_path` | `.local-memory/storage` | Path where the SQLite database and Graph data are stored. |
-| `model_path` | `.local-memory/models` | Path where local embedding model files (BERT/Nomic) are cached. |
-
-## 2. Embedding Model (`embedding`)
-
-This model runs **locally** on your CPU using the Rust `candle` crate. It is responsible for turning text into vectors for semantic search.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `name` | `nomic-ai/nomic-embed-text-v1.5` | The HuggingFace model ID. |
-| `provider` | `huggingface` | Where to fetch the model from (`huggingface` or `local`). |
-| `auto_download` | `true` | If true, missing model files will be downloaded on startup. |
-| `dimension` | `768` | Dimension of the vectors (must match the model architecture). |
-
-## 3. LLM Extractor (`llm_extractor`)
-
-This model is responsible for **GraphRAG Reasoning**: extracting entities and relationships from text.
-
-### Local (Recommended for Privacy)
-Uses **Candle** or **Ollama**.
 ```json
-"llm_extractor": {
-  "provider": "huggingface",
-  "name": "phi-3-mini-4k-instruct"
+{
+  "embedding": {
+    "name": "nomic-ai/nomic-embed-text-v1.5",
+    "provider": "huggingface"
+  },
+  "llm_extractor": {
+    "provider": "huggingface",
+    "name": "numind/NuExtract-1.5"
+  }
 }
 ```
 
-### Remote
-Requires an API key.
-```json
-"llm_extractor": {
-  "provider": "openai",
-  "name": "gpt-4o",
-  "api_key": "sk-..."
-}
-```
+## Configuration Reference
+
+### 1. Storage & Paths
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `storage_path` | `.local-memory/storage` | SQLite database and Graph data location. |
+| `model_path` | `.local-memory/models` | Local HuggingFace model cache. |
+
+### 2. Embedding Model (`embedding`)
+
+| Option | Description |
+|--------|-------------|
+| `name` | The model identifier (e.g., `nomic-embed-text-v2-moe`). |
+| `provider` | `ollama` (remote local), `huggingface` (native), or `openai`. |
+| `dimension` | Vector dimension. **Note**: Nomic models are 768. |
+| `base_url` | API endpoint for Ollama or OpenAI compatible servers. |
+
+### 3. LLM Extractor (`llm_extractor`)
+
+| Option | Description |
+|--------|-------------|
+| `provider` | `ollama`, `huggingface`, or `openai`. |
+| `name` | Model identifier (e.g., `frob/nuextract-2.0:8b-q8_0`). |
+| `auto_download`| If true, `lmcli init` will pull/download missing models. |
+
+---
 
 ## Environment Variables
 
-- `LOCAL_MEMORY_CONFIG`: Path to the config JSON file.
-- `OPENAI_API_KEY`: API key for OpenAI extraction (overrides config).
-- `ANTHROPIC_API_KEY`: API key for Anthropic extraction.
-- `GEMINI_API_KEY`: API key for Google Gemini extraction.
+Local Memory also respects standard environment variables which override the config file:
+
+- `LOCAL_MEMORY_CONFIG`: Custom path to `config.json`.
+- `OPENAI_API_KEY`: Required if provider is `openai`.
+- `ANTHROPIC_API_KEY`: Required for Anthropic reasoning.

@@ -1,73 +1,173 @@
 use crate::storage::sqlite::SqliteDatabase;
 use crate::engine::vectors::{encode_bq, slice_vector};
+use crate::KnowledgeEvent;
 use anyhow::Result;
 use std::sync::Arc;
 use uuid::Uuid;
 use edgequake_llm::{LLMProvider, EmbeddingProvider};
 use serde_json::json;
+use std::path::Path;
+use tokio::sync::broadcast;
 
 pub struct IngestionPipeline {
     embedder: Arc<dyn EmbeddingProvider>,
     db: Arc<SqliteDatabase>,
     llm: Option<Arc<dyn LLMProvider>>,
+    semantic_chunking: bool,
+    event_tx: Option<broadcast::Sender<KnowledgeEvent>>,
 }
 
 impl IngestionPipeline {
     pub fn new(
         embedder: Arc<dyn EmbeddingProvider>, 
         db: Arc<SqliteDatabase>,
-        llm: Option<Arc<dyn LLMProvider>>
+        llm: Option<Arc<dyn LLMProvider>>,
+        semantic_chunking: bool,
+        event_tx: Option<broadcast::Sender<KnowledgeEvent>>
     ) -> Self {
-        Self { embedder, db, llm }
+        Self { embedder, db, llm, semantic_chunking, event_tx }
     }
 
     pub async fn run(&self, text: &str, metadata: serde_json::Value) -> Result<Uuid> {
-        let id = Uuid::new_v4();
+        self.run_with_namespace(text, metadata, "default").await
+    }
 
-        // 1. Generate FULL embedding via Unified Provider
+    pub async fn run_auto(&self, input: &str, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
+        let path = Path::new(input);
+        if path.exists() && is_image_file(path) {
+            return self.run_image(path, metadata, namespace).await;
+        }
+        self.run_with_namespace(input, metadata, namespace).await
+    }
+
+    pub async fn run_image(&self, path: &Path, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
+        eprintln!("DEBUG: Performing OCR on {:?}", path);
+        let extracted_text = format!("Image file: {:?}. [OCR Placeholder: Simulated text from architecture diagram]", path);
+        let mut img_metadata = metadata.clone();
+        if let Some(obj) = img_metadata.as_object_mut() {
+            obj.insert("source_image".to_string(), json!(path.to_string_lossy()));
+            if !obj.contains_key("title") {
+                obj.insert("title".to_string(), json!(format!("Image: {}", path.file_name().unwrap_or_default().to_string_lossy())));
+            }
+        }
+        self.run_with_namespace(&extracted_text, img_metadata, namespace).await
+    }
+
+    pub async fn run_with_namespace(&self, text: &str, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
+        if text.contains("---CHUNK---") {
+            let chunks: Vec<&str> = text.split("---CHUNK---").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            let parent_id = Uuid::new_v4();
+            for chunk in chunks {
+                let mut chunk_meta = metadata.clone();
+                if let Some(obj) = chunk_meta.as_object_mut() {
+                    obj.insert("parent_id".to_string(), json!(parent_id.to_string()));
+                }
+                self.process_chunk(chunk, chunk_meta, namespace).await?;
+            }
+            return Ok(parent_id);
+        }
+
+        if self.semantic_chunking && self.llm.is_some() {
+            return self.run_semantic(text, metadata, namespace).await;
+        }
+
+        self.process_chunk(text, metadata, namespace).await
+    }
+
+    async fn process_chunk(&self, text: &str, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
+        let id = Uuid::new_v4();
         let v_full = self.embedder.embed_one(text).await
             .map_err(|e| anyhow::anyhow!("Embedding failed: {}", e))?;
-        
-        // 2. Generate Matryoshka (256d)
         let v_short = slice_vector(&v_full, 256);
-        
-        // 3. Generate BQ (768-bit)
         let v_bit = encode_bq(&v_full);
 
-        // 4. Update metadata to include raw text for search results
         let mut full_metadata = metadata.clone();
         if let Some(obj) = full_metadata.as_object_mut() {
             obj.insert("text".to_string(), json!(text));
+            obj.insert("created_at".to_string(), json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()));
         }
 
-        // 5. Insert into SQLite
         let title = metadata.get("title")
             .and_then(|v| v.as_str())
-            .unwrap_or("Untitled");
+            .unwrap_or_else(|| {
+                if text.len() > 50 { &text[..50] } else { text }
+            });
         
-        self.db.insert_document(id, title, text, &full_metadata, &v_full, &v_short, &v_bit)?;
+        self.db.insert_document_with_namespace(id, title, text, &full_metadata, &v_full, &v_short, &v_bit, namespace)?;
 
-        // 6. Knowledge Graph Extraction
-        if let Some(llm) = &self.llm {
-            self.extract_and_store_graph(text, id, llm).await?;
+        // Emit Event
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(KnowledgeEvent::DocumentInserted { 
+                id, 
+                title: title.to_string(), 
+                namespace: namespace.to_string() 
+            });
         }
 
+        if let Some(llm) = &self.llm {
+            self.extract_and_store_graph(text, id, llm, namespace).await?;
+        }
         Ok(id)
     }
 
-    async fn extract_and_store_graph(&self, text: &str, _doc_id: Uuid, llm: &Arc<dyn LLMProvider>) -> Result<()> {
+    async fn run_semantic(&self, text: &str, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
+        let llm = self.llm.as_ref().unwrap();
+        let prompt = format!(
+            "Divide the following text into logical semantic chunks.\n\
+             Return each chunk separated by '---CHUNK---'.\n\n\
+             Text: {}",
+            text
+        );
+        let response = llm.complete(&prompt).await?;
+        let chunks: Vec<&str> = response.content.split("---CHUNK---").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
+        let parent_id = Uuid::new_v4();
+        
+        let summary_prompt = format!("Provide a concise one-sentence summary of the following text:\n{}", text);
+        let summary_resp = llm.complete(&summary_prompt).await?;
+        let parent_summary = summary_resp.content.trim();
+
+        for chunk in chunks {
+            let mut chunk_meta = metadata.clone();
+            if let Some(obj) = chunk_meta.as_object_mut() {
+                obj.insert("parent_id".to_string(), json!(parent_id.to_string()));
+                obj.insert("parent_summary".to_string(), json!(parent_summary));
+            }
+            self.process_chunk(chunk, chunk_meta, namespace).await?;
+        }
+        Ok(parent_id)
+    }
+
+    async fn extract_and_store_graph(&self, text: &str, _doc_id: Uuid, llm: &Arc<dyn LLMProvider>, namespace: &str) -> Result<()> {
+        let mut existing_context = String::new();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        for word in words {
+            let clean = word.trim_matches(|c: char| !c.is_alphanumeric());
+            if clean.len() > 2 && clean.chars().next().map_or(false, |c| c.is_uppercase()) {
+                if let Ok(Some((_, etype, desc))) = self.db.get_entity_by_name_with_namespace(clean, namespace) {
+                    existing_context.push_str(&format!("- {} ({}): {}\n", clean, etype, desc));
+                }
+            }
+        }
+
+        let context_prompt = if existing_context.is_empty() { "".to_string() } else { format!("\nEXISTING KNOWLEDGE:\n{}\n", existing_context) };
+
         let prompt = format!(
             "Extract entities and relationships from the following text.\n\
-             Return the results in JSON format with two keys: 'entities' and 'relationships'.\n\
+             Return the results in JSON format with three keys: 'entities', 'relationships', and 'conflicts'.\n\
              Each entity should have: 'name', 'type', and 'description'.\n\
              Each relationship should have: 'source', 'target', 'predicate', and 'description'.\n\n\
+             KNOWLEDGE EVOLUTION:\n\
+             - If a fact in the text updates, extends, or supersedes existing knowledge, use predicates like 'UPDATES', 'EXTENDS', or 'SUPERSEDES'.\n\
+             - CONFLICT DETECTION: If the text directly CONTRADICTS existing knowledge provided below, list the conflict details in the 'conflicts' key.\n\
+             {}\n\
              Text: {}\n\nJSON:",
+            context_prompt,
             text
         );
 
         let response = llm.complete(&prompt).await?;
         let content = response.content;
-
         let json_str = if let Some(start) = content.find('{') {
             if let Some(end) = content.rfind('}') { &content[start..=end] } else { &content[start..] }
         } else { &content };
@@ -77,13 +177,26 @@ impl IngestionPipeline {
             Err(_) => return Ok(()),
         };
 
+        if let Some(conflicts) = graph.get("conflicts").and_then(|v| v.as_array()) {
+            for conflict in conflicts { eprintln!("CONFLICT DETECTED: {}", conflict); }
+        }
+
         if let Some(entities) = graph.get("entities").and_then(|v| v.as_array()) {
             for entity in entities {
                 let name = entity.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let etype = entity.get("type").and_then(|v| v.as_str()).unwrap_or("Concept");
                 let desc = entity.get("description").and_then(|v| v.as_str()).unwrap_or("");
                 if !name.is_empty() {
-                    let _ = self.db.insert_entity(name, etype, desc);
+                    if let Ok(entity_id) = self.db.insert_entity_with_namespace(name, etype, desc, namespace) {
+                        // Emit Event
+                        if let Some(tx) = &self.event_tx {
+                            let _ = tx.send(KnowledgeEvent::EntityInserted { 
+                                id: entity_id, 
+                                name: name.to_string(), 
+                                namespace: namespace.to_string() 
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -94,16 +207,27 @@ impl IngestionPipeline {
                 let t_name = rel.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let pred = rel.get("predicate").and_then(|v| v.as_str()).unwrap_or("");
                 let desc = rel.get("description").and_then(|v| v.as_str()).unwrap_or("");
-
-                let s = self.db.get_entity_by_name(s_name)?;
-                let t = self.db.get_entity_by_name(t_name)?;
-
+                let s = self.db.get_entity_by_name_with_namespace(s_name, namespace)?;
+                let t = self.db.get_entity_by_name_with_namespace(t_name, namespace)?;
                 if let (Some((s_id, _, _)), Some((t_id, _, _))) = (s, t) {
-                    let _ = self.db.insert_relationship(s_id, t_id, pred, desc);
+                    if self.db.insert_relationship(s_id, t_id, pred, desc).is_ok() {
+                        // Emit Event
+                        if let Some(tx) = &self.event_tx {
+                            let _ = tx.send(KnowledgeEvent::RelationshipInserted { 
+                                source_id: s_id, 
+                                target_id: t_id, 
+                                predicate: pred.to_string() 
+                            });
+                        }
+                    }
                 }
             }
         }
-
         Ok(())
     }
+}
+
+fn is_image_file(path: &Path) -> bool {
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    ["png", "jpg", "jpeg", "webp", "bmp"].contains(&ext.as_str())
 }

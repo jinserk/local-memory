@@ -1,25 +1,26 @@
-# Local Memory Architecture
+# Local Memory: EdgeQuake Architecture
 
-This document describes the architecture of Local Memory, a high-performance GraphRAG (Graph Retrieval-Augmented Generation) memory system with MCP integration.
+This document describes the high-performance GraphRAG architecture of Local Memory, inspired by the "Living Knowledge" philosophy of Supermemory.
 
 ## System Overview
 
+Local Memory operates as a local-first, zero-latency sidecar for AI agents. It combines a high-speed vector retrieval funnel with a relational knowledge graph.
+
 ```
 +------------------+     +------------------+     +------------------+
-|   MCP Client     |     |   CLI (lmcli)    |     |   External       |
-|   (OpenCode,     |     |   Diagnostics    |     |   Applications   |
-|   Claude-code)   |     |                  |     |                  |
+|   MCP Client     |     |   CLI (lmcli)    |     |   IDE / Agent    |
+| (Claude, Gemini) |     |   Setup & Diag   |     |   Extensions     |
 +--------+---------+     +--------+---------+     +--------+---------+
          |                        |                        |
-         | JSON-RPC 2.0           | Direct                 |
-         | (stdio)                | Access                 |
+         | JSON-RPC 2.0           | Binary                 | Direct
+         | (stdio)                | Access                 | Call
          v                        v                        v
 +--------+---------------------------------------------------------+
 |                         MCP Server Layer                        |
 |  +----------------------------------------------------------+   |
-|  |                    MCP Tools (tools.rs)                   |   |
+|  |                    MCP Tools & Resources                  |   |
 |  |    - memory_insert           - memory_search              |   |
-|  |    - graph_get_neighborhood                               |   |
+|  |    - graph_get_neighborhood  - [FUTURE] context_resource  |   |
 |  +----------------------------------------------------------+   |
 +-----------------------------+-----------------------------------+
                               |
@@ -27,8 +28,8 @@ This document describes the architecture of Local Memory, a high-performance Gra
 +-----------------------------+-----------------------------------+
 |                        Engine Layer                             |
 |  +-------------+  +------------------+  +------------------+   |
-|  | Ingestion   |  |  Search Funnel   |  | LLM Graph        |   |
-|  | Pipeline    |  |  Coordinator     |  | Extractor        |   |
+|  | Ingestion   |  |  Search Funnel   |  | LLM Structured   |   |
+|  | Pipeline    |  |  (3-Stage)       |  | Extractor        |   |
 |  +------+------+  +---------+--------+  +---------+--------+   |
 |         |                  |                     |              |
 |         v                  v                     v              |
@@ -40,11 +41,11 @@ This document describes the architecture of Local Memory, a high-performance Gra
                               v
 +-----------------------------+-----------------------------------+
 |                        Model Layer                              |
-|  +----------------------------------------------------------+   |
-|  |                   Nomic Model                            |   |
-|  |    - Text tokenization    - 768d embedding generation    |   |
-|  |    - Mean pooling         - L2 normalization             |   |
-|  +----------------------------------------------------------+   |
+|  +--------------------------+  +----------------------------+   |
+|  |      Embedder (Vector)   |  |      Reasoning (Graph)     |   |
+|  |  - Nomic 1.5 (Local)     |  |  - NuExtract 1.5 (Local)    |   |
+|  |  - Nomic v2-moe (Ollama) |  |  - NuExtract 2.0 (Ollama)   |   |
+|  +--------------------------+  +----------------------------+   |
 +-----------------------------+-----------------------------------+
                               |
                               v
@@ -54,77 +55,37 @@ This document describes the architecture of Local Memory, a high-performance Gra
 |  |              SQLite Database (sqlite-vec)                |   |
 |  |  +--------------+  +-------------+  +-----------------+  |   |
 |  |  | Documents    |  | Entities    |  | Relationships   |  |   |
-|  |  | (Table)      |  | (Table)     |  | (Table)         |  |   |
+|  |  | [Temporal]   |  | [Graph]     |  | [Triples]       |  |   |
 |  |  +--------------+  +-------------+  +-----------------+  |   |
-|  |  | Vec Docs     |  | Vec Entity  |  | Bit Vectors     |  |   |
-|  |  | (Virtual)    |  | (Virtual)   |  | (Virtual)       |  |   |
+|  |  | Vec_Bit      |  | Vec_Short   |  | Vec_Full        |  |   |
+|  |  | (Hamming)    |  | (Matryoshka)|  | (Cosine)        |  |   |
 |  |  +--------------+  +-------------+  +-----------------+  |   |
 |  +----------------------------------------------------------+   |
 +-----------------------------------------------------------------+
 ```
 
-## Components
+## Core Components
 
-### 1. MCP Server Layer (`src/main.rs`, `src/mcp/`)
+### 1. 3-Stage Search Funnel (`src/engine/funnel.rs`)
+To achieve sub-millisecond retrieval over thousands of documents, we use a tiered funnel:
+1.  **Stage 1: Binary Quantization (BQ)**: Fast Hamming distance search over packed bit-vectors. Filters top 50 candidates.
+2.  **Stage 2: Matryoshka Slicing**: Re-ranks candidates using a smaller "short" vector (typically dimension/3). Filters top 20.
+3.  **Stage 3: Full Precision + Graph**: Final Cosine similarity using the full 768d vector, fused with Knowledge Graph context.
 
-The entry point for all MCP communication. Implements JSON-RPC 2.0 over stdio.
+### 2. Living Knowledge Graph (`src/engine/ingestion.rs`)
+Unlike static databases, Local Memory tracks the evolution of facts:
+*   **Temporal Ingestion**: [IN PROGRESS] Tracks versioning so newer facts (e.g., today's weather) supersede historical ones.
+*   **Structured Extraction**: Uses `NuExtract` to turn natural language into JSON triples (`Source` -> `Predicate` -> `Target`).
 
-**Supported Tools:**
-- `memory_insert`: Ingests text and extracts graph data.
-- `memory_search`: Hybrid retrieval combining vector and graph context.
-- `graph_get_neighborhood`: Direct exploration of entity connections.
+### 3. Unified Model Provider (`src/model/`)
+We use an **Asymmetric Model Factory**:
+*   **`CandleProvider`**: High-speed local BERT/Phi-3 execution using Rust.
+*   **`GenericUnifiedModel`**: Allows mixing cloud APIs (OpenAI) with local servers (Ollama) for different tasks in the same session.
 
-### 2. Engine Layer (`src/engine/`)
+## Data Lifecycle
 
-#### Ingestion Pipeline (`ingestion.rs`)
-
-Orchestrates the flow from raw text to structured Knowledge Graph:
-1. **Embedding**: Generates 768d vector via local Nomic model.
-2. **Extraction**: Uses `edgequake-llm` to identify entities and relationships.
-3. **Storage**: Atomically commits documents, entities, and edges to SQLite.
-
-#### Search Funnel (`funnel.rs`)
-
-Implements **Hybrid Retrieval**:
-1. **Vector Search**: Identifies the top-k most similar document chunks using `sqlite-vec`.
-2. **Graph Traversal**: Expands relevant entities to find connected facts (the "neighborhood").
-3. **Context Fusion**: Combines text snippets with graph metadata for the final prompt.
-
-### 3. Model Layer (`src/model/`)
-
-#### Nomic Embed Text v1.5 (`nomic.rs`)
-Local embedding generation using `candle-transformers`.
-
-### 4. Storage Layer (`src/storage/sqlite.rs`)
-
-Uses SQLite with the `sqlite-vec` extension for unified storage.
-
-**Primary Tables:**
-- `documents`: Stores raw content and metadata.
-- `entities`: Stores unique concepts, people, and objects.
-- `relationships`: Stores directed edges between entities (triplets).
-- `vec_documents`: Virtual table for sub-millisecond vector similarity search.
-
-## Data Flow
-
-### Hybrid Search Flow
-
-```
-Client                    MCP Server                Engine                 Storage
-  |                           |                        |                      |
-  |---- memory_search ------->|                        |                      |
-  |                           |---- encode query ----->|                      |
-  |                           |                        |---- vec search ----->|
-  |                           |                        |<--- top chunks ------|
-  |                           |---- extract context -->|                      |
-  |                           |                        |---- traverse graph ->|
-  |                           |                        |<--- related facts ---|
-  |                           |<--- fused results -----|                      |
-  |<--- JSON results ---------|                        |                      |
-```
-
-## Performance
-
-- **Vector Search**: ~100-200 microseconds for 1000 documents via `sqlite-vec`.
-- **Graph Traversal**: O(1) lookups for immediate neighborhood.
-- **Storage Footprint**: Efficient relational storage with minimal overhead.
+1.  **Ingest**: Raw text is passed to `memory_insert`.
+2.  **Embed**: The text is prefixed with `search_document: ` and vectorized.
+3.  **Extract**: The model identifies entities (e.g., `Boston`) and links (e.g., `IN` -> `Massachusetts`).
+4.  **Store**: All data is committed to a single SQLite file, including 3 tiers of vectors.
+5.  **Retrieve**: `memory_search` query is prefixed with `search_query: `, run through the funnel, and returned with Graph context.

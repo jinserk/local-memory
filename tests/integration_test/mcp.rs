@@ -31,27 +31,27 @@ impl McpTestServer {
             anyhow::bail!("Could not find local-memory binary. Please build the project first.");
         }
 
-        // Use real models dir structure
         let mut base_models_path = cwd.clone();
         base_models_path.push(".local-memory");
         base_models_path.push("models");
 
-        // Create storage directory explicitly
         let storage_path = temp_dir.path().join("storage");
         std::fs::create_dir_all(&storage_path)?;
 
-        // Create test config using Nomic 1.5
+        // Use Ollama for LLM extractor in tests to avoid HuggingFace download issues
         let config = json!({
             "storage_path": storage_path.to_string_lossy(),
             "model_path": base_models_path.to_string_lossy(),
             "embedding": {
-                "name": "nomic-ai/nomic-embed-text-v1.5",
+                "name": "nomic-embed-text-v2-moe",
+                "provider": "ollama",
                 "auto_download": true, 
                 "dimension": 768
             },
             "llm_extractor": {
-                "provider": "huggingface",
-                "name": "phi-3-mini-4k-instruct"
+                "provider": "ollama",
+                "name": "frob/nuextract-2.0:8b-q8_0",
+                "auto_download": true
             }
         });
 

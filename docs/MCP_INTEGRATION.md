@@ -1,107 +1,44 @@
 # MCP Integration Guide
 
-This guide explains how to integrate Local Memory (GraphRAG) with MCP-compatible clients like OpenCode, Claude Desktop, Cursor, and custom applications.
+This guide describes how to integrate Local Memory with MCP clients (OpenCode, Claude, etc.) to give them "Supermemory" capabilities.
 
-## MCP Protocol Overview
+## Protocol Details
 
-Local Memory implements the Model Context Protocol (MCP) using JSON-RPC 2.0 over stdio. It allows AI agents to store structured memories as a Knowledge Graph and retrieve them using hybrid search.
-
-### Protocol Details
+Local Memory implements the Model Context Protocol (MCP) using JSON-RPC 2.0 over stdio.
 
 | Aspect | Value |
 |--------|-------|
-| Protocol Version | 2024-11-05 |
-| Transport | stdio (JSON-RPC 2.0) |
 | Server Name | `local-memory` |
-| Server Version | `0.2.0-edgequake` |
+| Capabilities | Tools |
 
 ## Tool Reference
 
 ### `memory_insert`
-
-Ingests text, generates vector embeddings, and performs LLM-based entity/relationship extraction to build the knowledge graph.
-
-#### Input Schema
-```json
-{
-  "type": "object",
-  "properties": {
-    "text": { "type": "string", "description": "The text content to remember" },
-    "metadata": { "type": "object", "description": "Optional metadata (title, source, etc.)" }
-  },
-  "required": ["text"]
-}
-```
+Ingests text into the vectorized database and Knowledge Graph.
+- **Workflow**: Embed -> Extract -> Store.
+- **Auto-Formatting**: If using a local `NuExtract` model, the server automatically formats the prompt into the required JSON template format.
 
 ### `memory_search`
-
-Performs a **Hybrid Search** combining vector similarity (via `sqlite-vec`) and Knowledge Graph traversal.
-
-#### Input Schema
-```json
-{
-  "type": "object",
-  "properties": {
-    "query": { "type": "string", "description": "The search query" },
-    "top_k": { "type": "integer", "description": "Number of results", "default": 5 }
-  },
-  "required": ["query"]
-}
-```
+The primary retrieval tool.
+- **Logic**: Performs a 3-stage hybrid search.
+- **Output**: Returns relevant text snippets along with their related Knowledge Graph entities and relationships.
 
 ### `graph_get_neighborhood`
+Explores the graph directly.
+- **Use Case**: When an agent already knows an entity (e.g., "Project EdgeQuake") and wants to see everything connected to it without doing a vector search.
 
-Retrieves all entities and relationships directly connected to a specific entity. This is useful for "multi-hop" reasoning where an agent needs to explore context around a known concept.
-
-#### Input Schema
-```json
-{
-  "type": "object",
-  "properties": {
-    "entity_name": { "type": "string", "description": "Entity name to explore" }
-  },
-  "required": ["entity_name"]
-}
-```
-
-## Integration Examples
-
-### Claude Desktop
-
-Edit your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "local-memory": {
-      "command": "/path/to/local-memory/target/release/local-memory",
-      "env": {
-        "OPENAI_API_KEY": "your-key-for-graph-extraction"
-      }
-    }
-  }
-}
-```
-
-### Cursor
-
-Add a new MCP server in Cursor settings:
-- **Name**: `local-memory`
-- **Type**: `command`
-- **Command**: `/path/to/local-memory/target/release/local-memory`
-
-## Advanced: Entity Extraction
-
-To enable Knowledge Graph extraction, ensure an LLM provider is configured via environment variables when starting the server:
-
-| Provider | Variable | Note |
-|----------|----------|------|
-| OpenAI | `OPENAI_API_KEY` | Used for extracting nodes/edges from text |
-
-If no LLM is configured, `memory_insert` will still store the text and vector for semantic search, but the Knowledge Graph will not be updated.
+---
 
 ## Best Practices for Agents
 
-1. **Use `memory_insert` for facts**: "Remember that project X uses React."
-2. **Use `memory_search` for open questions**: "What do I know about the frontend tech stack?"
-3. **Use `graph_get_neighborhood` for exploration**: "Tell me more about 'React' and what else it's connected to in my memory."
+To act like a "Living Knowledge" system, agents should follow these patterns:
+
+### 1. Proactive Memory Retrieval
+Instead of asking the user, the agent should call `memory_search` at the start of a session to see if there is relevant history or previous architectural decisions.
+
+### 2. Fact Consolidation
+When an agent creates a new file or fixes a bug, it should call `memory_insert` with a brief summary:
+*"I fixed the CORS issue in the worker by adding the correct headers to the response object."*
+
+### 3. Multi-Hop Reasoning
+Agents can use the output of `memory_search` to find entities, then call `graph_get_neighborhood` on those entities to discover deep connections that weren't in the initial text snippets.

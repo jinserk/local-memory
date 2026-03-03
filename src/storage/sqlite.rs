@@ -4,9 +4,10 @@ use sqlite_vec::sqlite3_vec_init;
 use uuid::Uuid;
 use zerocopy::IntoBytes;
 use serde_json::{json, Value};
+use std::sync::Mutex;
 
 pub struct SqliteDatabase {
-    conn: Connection,
+    conn: Mutex<Connection>,
     dimension: usize,
 }
 
@@ -24,16 +25,71 @@ impl SqliteDatabase {
         // Enable WAL mode for better concurrency
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
 
-        let db = Self { conn, dimension };
+        let db = Self { conn: Mutex::new(conn), dimension };
         db.initialize()?;
         Ok(db)
     }
 
     fn initialize(&self) -> Result<()> {
-        // Core tables
-        self.conn.execute("CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, title TEXT, content TEXT, metadata TEXT, created_at INTEGER)", [])?;
-        self.conn.execute("CREATE TABLE IF NOT EXISTS entities (id TEXT PRIMARY KEY, name TEXT, type TEXT, description TEXT, metadata TEXT, UNIQUE(name, type))", [])?;
-        self.conn.execute("CREATE TABLE IF NOT EXISTS relationships (id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT, predicate TEXT, description TEXT, metadata TEXT, FOREIGN KEY(source_id) REFERENCES entities(id), FOREIGN KEY(target_id) REFERENCES entities(id))", [])?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        // Core tables with temporal and namespacing support
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY, 
+                stable_id TEXT,
+                parent_id TEXT,
+                title TEXT, 
+                content TEXT, 
+                metadata TEXT, 
+                created_at INTEGER,
+                version INTEGER DEFAULT 1,
+                is_latest INTEGER DEFAULT 1,
+                namespace TEXT DEFAULT 'default'
+            )", 
+            []
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS entities (
+                id TEXT PRIMARY KEY, 
+                name TEXT, 
+                type TEXT, 
+                description TEXT, 
+                metadata TEXT,
+                version INTEGER DEFAULT 1,
+                is_latest INTEGER DEFAULT 1,
+                namespace TEXT DEFAULT 'default',
+                community_id TEXT,
+                UNIQUE(name, type, namespace, version)
+            )", 
+            []
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS relationships (
+                id TEXT PRIMARY KEY, 
+                source_id TEXT, 
+                target_id TEXT, 
+                predicate TEXT, 
+                description TEXT, 
+                metadata TEXT, 
+                FOREIGN KEY(source_id) REFERENCES entities(id), 
+                FOREIGN KEY(target_id) REFERENCES entities(id)
+            )", 
+            []
+        )?;
+
+        // Communities table for Global Search
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS communities (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                summary TEXT,
+                level INTEGER DEFAULT 0,
+                metadata TEXT
+            )",
+            []
+        )?;
 
         // MULTI-STAGE VECTOR TABLES
         let s2_dim = self.dimension / 3;
@@ -42,14 +98,54 @@ impl SqliteDatabase {
         let sql_short = format!("CREATE VIRTUAL TABLE IF NOT EXISTS vec_short_docs USING vec0(id TEXT PRIMARY KEY, embedding float[{}])", s2_dim);
         let sql_full = format!("CREATE VIRTUAL TABLE IF NOT EXISTS vec_full_docs USING vec0(id TEXT PRIMARY KEY, embedding float[{}])", self.dimension);
 
-        self.conn.execute(&sql_bit, [])?;
-        self.conn.execute(&sql_short, [])?;
-        self.conn.execute(&sql_full, [])?;
+        conn.execute(&sql_bit, [])?;
+        conn.execute(&sql_short, [])?;
+        conn.execute(&sql_full, [])?;
+
+        drop(conn);
+        self.ensure_columns()?;
 
         Ok(())
     }
 
-    pub fn insert_document(
+    fn ensure_columns(&self) -> Result<()> {
+        let tables = ["documents", "entities", "communities"];
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        for table in tables {
+            let mut info = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+            let columns: Vec<String> = info.query_map([], |row| row.get(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            if table != "communities" {
+                if !columns.contains(&"version".to_string()) {
+                    conn.execute(&format!("ALTER TABLE {} ADD COLUMN version INTEGER DEFAULT 1", table), [])?;
+                }
+                if !columns.contains(&"is_latest".to_string()) {
+                    conn.execute(&format!("ALTER TABLE {} ADD COLUMN is_latest INTEGER DEFAULT 1", table), [])?;
+                }
+                if !columns.contains(&"namespace".to_string()) {
+                    conn.execute(&format!("ALTER TABLE {} ADD COLUMN namespace TEXT DEFAULT 'default'", table), [])?;
+                }
+            }
+
+            if table == "entities" && !columns.contains(&"community_id".to_string()) {
+                conn.execute("ALTER TABLE entities ADD COLUMN community_id TEXT", [])?;
+            }
+
+            if table == "documents" {
+                if !columns.contains(&"stable_id".to_string()) {
+                    conn.execute("ALTER TABLE documents ADD COLUMN stable_id TEXT", [])?;
+                    conn.execute("UPDATE documents SET stable_id = id WHERE stable_id IS NULL", [])?;
+                }
+                if !columns.contains(&"parent_id".to_string()) {
+                    conn.execute("ALTER TABLE documents ADD COLUMN parent_id TEXT", [])?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn insert_document_with_namespace(
         &self, 
         id: Uuid, 
         title: &str, 
@@ -57,39 +153,56 @@ impl SqliteDatabase {
         metadata: &Value, 
         v_full: &[f32],
         v_short: &[f32],
-        v_bit: &[u8]
+        v_bit: &[u8],
+        namespace: &str
     ) -> Result<()> {
         let metadata_str = serde_json::to_string(metadata)?;
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        self.conn.execute(
-            "INSERT INTO documents (id, title, content, metadata, created_at) VALUES (?, ?, ?, ?, ?)",
-            params![id.to_string(), title, content, metadata_str, created_at],
+        let parent_id = metadata.get("parent_id").and_then(|v| v.as_str());
+
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+
+        let (stable_id, version) = if !title.is_empty() && title != "Untitled" {
+            let mut stmt = conn.prepare("SELECT stable_id, MAX(version) FROM documents WHERE title = ? AND namespace = ? GROUP BY stable_id")?;
+            let existing: Option<(String, i32)> = stmt.query_row(params![title, namespace], |row| Ok((row.get(0)?, row.get(1)?))).ok();
+
+            if let Some((s_id, v)) = existing {
+                conn.execute(
+                    "UPDATE documents SET is_latest = 0 WHERE stable_id = ? AND namespace = ?",
+                    params![s_id, namespace],
+                )?;
+                (s_id, v + 1)
+            } else {
+                (id.to_string(), 1)
+            }
+        } else {
+            (id.to_string(), 1)
+        };
+
+        conn.execute(
+            "INSERT INTO documents (id, stable_id, parent_id, title, content, metadata, created_at, version, is_latest, namespace) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            params![id.to_string(), stable_id, parent_id, title, content, metadata_str, created_at, version, namespace],
         )?;
 
-        self.conn.execute(
-            "INSERT INTO vec_full_docs (id, embedding) VALUES (?, ?)",
-            params![id.to_string(), v_full.as_bytes()],
-        )?;
-        self.conn.execute(
-            "INSERT INTO vec_short_docs (id, embedding) VALUES (?, ?)",
-            params![id.to_string(), v_short.as_bytes()],
-        )?;
-        self.conn.execute(
-            "INSERT INTO vec_bit_docs (id, embedding) VALUES (?, vec_bit(?))",
-            params![id.to_string(), v_bit],
-        )?;
+        conn.execute("INSERT INTO vec_full_docs (id, embedding) VALUES (?, ?)", params![id.to_string(), v_full.as_bytes()])?;
+        conn.execute("INSERT INTO vec_short_docs (id, embedding) VALUES (?, ?)", params![id.to_string(), v_short.as_bytes()])?;
+        conn.execute("INSERT INTO vec_bit_docs (id, embedding) VALUES (?, vec_bit(?))", params![id.to_string(), v_bit])?;
 
         Ok(())
     }
 
-    pub fn search_stage1_bit(&self, query_bit: &[u8], limit: usize) -> Result<Vec<Uuid>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id FROM vec_bit_docs WHERE embedding MATCH vec_bit(?) AND k = ? ORDER BY distance ASC"
+    pub fn search_stage1_bit_with_namespace(&self, query_bit: &[u8], limit: usize, namespace: &str) -> Result<Vec<Uuid>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT v.id FROM vec_bit_docs v 
+             JOIN documents d ON v.id = d.id
+             WHERE v.embedding MATCH vec_bit(?) AND d.namespace = ? AND d.is_latest = 1 AND k = ? 
+             ORDER BY distance ASC"
         )?;
-        let rows = stmt.query_map(params![query_bit, limit], |row| {
+        let rows = stmt.query_map(params![query_bit, namespace, limit], |row| {
             let id_str: String = row.get(0)?;
             Ok(Uuid::parse_str(&id_str).unwrap())
         })?;
@@ -101,25 +214,25 @@ impl SqliteDatabase {
 
     pub fn search_stage2_short(&self, ids: &[Uuid], query_short: &[f32], limit: usize) -> Result<Vec<(Uuid, f32)>> {
         if ids.is_empty() { return Ok(vec![]); }
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
         let id_list: Vec<String> = ids.iter().map(|id| format!("'{}'", id)).collect();
         let sql = format!(
             "SELECT id, distance FROM vec_short_docs WHERE id IN ({}) AND embedding MATCH ? AND k = ? ORDER BY distance ASC",
             id_list.join(",")
         );
-        
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![query_short.as_bytes(), limit], |row| {
             let id_str: String = row.get(0)?;
             Ok((Uuid::parse_str(&id_str).unwrap(), row.get(1)?))
         })?;
-
         let mut results = Vec::new();
         for row in rows { results.push(row?); }
         Ok(results)
     }
 
     pub fn get_document_content(&self, id: Uuid) -> Result<Option<(String, Value)>> {
-        let mut stmt = self.conn.prepare("SELECT content, metadata FROM documents WHERE id = ?")?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT content, metadata FROM documents WHERE id = ?")?;
         let mut rows = stmt.query(params![id.to_string()])?;
         if let Some(row) = rows.next()? {
             let content: String = row.get(0)?;
@@ -131,23 +244,33 @@ impl SqliteDatabase {
         }
     }
 
-    pub fn insert_entity(&self, name: &str, entity_type: &str, description: &str) -> Result<Uuid> {
-        let mut stmt = self.conn.prepare("SELECT id FROM entities WHERE name = ?")?;
-        if let Ok(id_str) = stmt.query_row(params![name], |r| r.get::<_, String>(0)) {
-            return Ok(Uuid::parse_str(&id_str)?);
-        }
+    pub fn insert_entity_with_namespace(&self, name: &str, entity_type: &str, description: &str, namespace: &str) -> Result<Uuid> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT version FROM entities WHERE name = ? AND type = ? AND namespace = ? AND is_latest = 1")?;
+        let existing_version: Option<i32> = stmt.query_row(params![name, entity_type, namespace], |row| row.get(0)).ok();
+
+        let version = if let Some(v) = existing_version {
+            let mut check_stmt = conn.prepare("SELECT id, description FROM entities WHERE name = ? AND type = ? AND namespace = ? AND is_latest = 1")?;
+            let (id_str, old_desc): (String, String) = check_stmt.query_row(params![name, entity_type, namespace], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            if old_desc == description { return Ok(Uuid::parse_str(&id_str)?); }
+            conn.execute("UPDATE entities SET is_latest = 0 WHERE name = ? AND type = ? AND namespace = ?", params![name, entity_type, namespace])?;
+            v + 1
+        } else {
+            1
+        };
 
         let id = Uuid::new_v4();
-        self.conn.execute(
-            "INSERT INTO entities (id, name, type, description, metadata) VALUES (?, ?, ?, ?, ?)",
-            params![id.to_string(), name, entity_type, description, "{}"],
+        conn.execute(
+            "INSERT INTO entities (id, name, type, description, metadata, namespace, version, is_latest) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+            params![id.to_string(), name, entity_type, description, "{}", namespace, version],
         )?;
         Ok(id)
     }
 
-    pub fn get_entity_by_name(&self, name: &str) -> Result<Option<(Uuid, String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT id, type, description FROM entities WHERE name = ?")?;
-        let mut rows = stmt.query(params![name])?;
+    pub fn get_entity_by_name_with_namespace(&self, name: &str, namespace: &str) -> Result<Option<(Uuid, String, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT id, type, description FROM entities WHERE name = ? AND namespace = ? AND is_latest = 1")?;
+        let mut rows = stmt.query(params![name, namespace])?;
         if let Some(row) = rows.next()? {
             let id_str: String = row.get(0)?;
             let id = Uuid::parse_str(&id_str)?;
@@ -160,39 +283,37 @@ impl SqliteDatabase {
     }
 
     pub fn insert_relationship(&self, source_id: Uuid, target_id: Uuid, predicate: &str, description: &str) -> Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        conn.execute(
             "INSERT INTO relationships (id, source_id, target_id, predicate, description, metadata) VALUES (?, ?, ?, ?, ?, ?)",
             params![Uuid::new_v4().to_string(), source_id.to_string(), target_id.to_string(), predicate, description, "{}"],
         )?;
         Ok(())
     }
 
-    pub fn get_neighborhood(&self, entity_name: &str) -> Result<Value> {
-        let entity = self.get_entity_by_name(entity_name)?;
+    pub fn get_neighborhood_with_namespace(&self, entity_name: &str, namespace: &str) -> Result<Value> {
+        let entity = self.get_entity_by_name_with_namespace(entity_name, namespace)?;
         if let Some((id, etype, desc)) = entity {
-            let mut stmt = self.conn.prepare(
-                "SELECT r.predicate, e.name FROM relationships r JOIN entities e ON r.target_id = e.id WHERE r.source_id = ?"
-            )?;
+            let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+            let mut stmt = conn.prepare("SELECT r.predicate, e.name FROM relationships r JOIN entities e ON r.target_id = e.id WHERE r.source_id = ?")?;
             let relations = stmt.query_map(params![id.to_string()], |row| {
                 Ok(json!({"predicate": row.get::<_, String>(0)?, "target": row.get::<_, String>(1)?}))
             })?.collect::<Result<Vec<_>, _>>()?;
-
-            Ok(json!({
-                "entity": {"name": entity_name, "type": etype, "description": desc},
-                "relationships": relations
-            }))
+            Ok(json!({"entity": {"name": entity_name, "type": etype, "description": desc}, "relationships": relations}))
         } else {
             Ok(json!({"error": "Entity not found"}))
         }
     }
 
     pub fn count_entities(&self) -> Result<i64> {
-        let count: i64 = self.conn.query_row("SELECT count(*) FROM entities", [], |r| r.get(0))?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let count: i64 = conn.query_row("SELECT count(*) FROM entities WHERE is_latest = 1", [], |r| r.get(0))?;
         Ok(count)
     }
 
     pub fn list_entities(&self, limit: usize) -> Result<Vec<(String, String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT name, type, description FROM entities LIMIT ?")?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT name, type, description FROM entities WHERE is_latest = 1 LIMIT ?")?;
         let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         let mut results = Vec::new();
         for row in rows { results.push(row?); }
@@ -200,10 +321,83 @@ impl SqliteDatabase {
     }
 
     pub fn list_relationships(&self, limit: usize) -> Result<Vec<(String, String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT e1.name, r.predicate, e2.name FROM relationships r JOIN entities e1 ON r.source_id = e1.id JOIN entities e2 ON r.target_id = e2.id LIMIT ?"
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT e1.name, r.predicate, e2.name FROM relationships r 
+             JOIN entities e1 ON r.source_id = e1.id 
+             JOIN entities e2 ON r.target_id = e2.id 
+             WHERE e1.is_latest = 1 AND e2.is_latest = 1 LIMIT ?"
         )?;
         let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let mut results = Vec::new();
+        for row in rows { results.push(row?); }
+        Ok(results)
+    }
+
+    pub fn count_documents_by_parent(&self, parent_id: &str) -> Result<i32> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let count: i32 = conn.query_row("SELECT count(*) FROM documents WHERE parent_id = ?", params![parent_id], |r| r.get(0))?;
+        Ok(count)
+    }
+
+    pub fn update_entity_community(&self, entity_id: Uuid, community_id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        conn.execute("UPDATE entities SET community_id = ? WHERE id = ?", params![community_id, entity_id.to_string()])?;
+        Ok(())
+    }
+
+    pub fn list_all_relationships(&self) -> Result<Vec<(Uuid, Uuid, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT source_id, target_id, predicate FROM relationships")?;
+        let rows = stmt.query_map([], |row| {
+            let s: String = row.get(0)?;
+            let t: String = row.get(1)?;
+            Ok((Uuid::parse_str(&s).unwrap(), Uuid::parse_str(&t).unwrap(), row.get(2)?))
+        })?;
+        let mut results = Vec::new();
+        for row in rows { results.push(row?); }
+        Ok(results)
+    }
+
+    // NEW HELPER METHODS FOR SIDE CARS & CLI
+    pub fn get_entity_community_id(&self, entity_id: Uuid) -> Result<Option<String>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let comm_id: Option<String> = conn.query_row("SELECT community_id FROM entities WHERE id = ?", params![entity_id.to_string()], |r| r.get(0)).ok();
+        Ok(comm_id)
+    }
+
+    pub fn list_community_members(&self, comm_id: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT name, description FROM entities WHERE community_id = ?")?;
+        let rows = stmt.query_map([comm_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let mut results = Vec::new();
+        for row in rows { results.push(row?); }
+        Ok(results)
+    }
+
+    pub fn upsert_community(&self, id: &str, title: &str, summary: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        conn.execute(
+            "INSERT INTO communities (id, title, summary, level, metadata) VALUES (?, ?, ?, 0, ?)
+             ON CONFLICT(id) DO UPDATE SET title = ?, summary = ?, metadata = ?",
+            params![id, title, summary, "{}", title, summary, "{}"],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_community_summaries(&self, limit: usize) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT id, title, summary FROM communities LIMIT ?")?;
+        let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let mut results = Vec::new();
+        for row in rows { results.push(row?); }
+        Ok(results)
+    }
+
+    pub fn list_entities_full(&self, limit: usize) -> Result<Vec<(String, String, Option<String>, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT name, type, community_id, description FROM entities WHERE is_latest = 1 LIMIT ?")?;
+        let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
         let mut results = Vec::new();
         for row in rows { results.push(row?); }
         Ok(results)

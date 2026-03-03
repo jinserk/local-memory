@@ -314,7 +314,6 @@ impl crate::model::UnifiedModel for CandleProvider {
     }
 }
 
-// --- Internal Downloader Logic ---
 const MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 pub fn get_model_dir(base_path: &Path, model_name: &str) -> PathBuf {
     let safe_name = model_name.replace("/", "__");

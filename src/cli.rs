@@ -37,10 +37,22 @@ pub enum Commands {
         /// Max number of entities to show
         #[arg(short, long, default_value = "20")]
         limit: usize,
+        /// Namespace to list from
+        #[arg(short, long)]
+        namespace: Option<String>,
     },
     /// List extracted relationships
     ListRelations {
         /// Max number of relationships to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Namespace to list from
+        #[arg(short, long)]
+        namespace: Option<String>,
+    },
+    /// List generated communities
+    ListCommunities {
+        /// Max number of communities to show
         #[arg(short, long, default_value = "20")]
         limit: usize,
     },
@@ -51,6 +63,17 @@ pub enum Commands {
         /// Number of results to return
         #[arg(short, long, default_value = "10")]
         top_k: usize,
+        /// Namespace to search in
+        #[arg(short, long)]
+        namespace: Option<String>,
+    },
+    /// Inspect version history of a document
+    History {
+        /// Document title to inspect
+        title: String,
+        /// Namespace to look in
+        #[arg(short, long)]
+        namespace: Option<String>,
     },
     /// Inspect a specific document by ID
     Inspect {
@@ -65,7 +88,7 @@ pub enum Commands {
 struct MemoryRow {
     #[tabled(rename = "ID")]
     id: String,
-    #[tabled(rename = "Distance")]
+    #[tabled(rename = "Score")]
     distance: String,
     #[tabled(rename = "Preview")]
     preview: String,
@@ -77,6 +100,8 @@ struct EntityRow {
     name: String,
     #[tabled(rename = "Type")]
     entity_type: String,
+    #[tabled(rename = "Comm ID")]
+    community_id: String,
     #[tabled(rename = "Description")]
     description: String,
 }
@@ -89,6 +114,16 @@ struct RelationRow {
     predicate: String,
     #[tabled(rename = "Target")]
     target: String,
+}
+
+#[derive(Tabled)]
+struct CommunityRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Title")]
+    title: String,
+    #[tabled(rename = "Summary")]
+    summary: String,
 }
 
 #[derive(Tabled)]
@@ -113,19 +148,29 @@ pub fn run(cli: Cli) -> Result<()> {
                 run_stats(&config).await
             })
         },
-        Commands::ListEntities { limit } => {
+        Commands::ListEntities { limit, namespace } => {
             tokio::runtime::Runtime::new()?.block_on(async {
-                run_list_entities(&config, limit).await
+                run_list_entities(&config, limit, namespace.as_deref().unwrap_or("default")).await
             })
         },
-        Commands::ListRelations { limit } => {
+        Commands::ListRelations { limit, namespace } => {
             tokio::runtime::Runtime::new()?.block_on(async {
-                run_list_relations(&config, limit).await
+                run_list_relations(&config, limit, namespace.as_deref().unwrap_or("default")).await
             })
         },
-        Commands::Search { query, top_k } => {
+        Commands::ListCommunities { limit } => {
             tokio::runtime::Runtime::new()?.block_on(async {
-                run_search(&config, &query, top_k).await
+                run_list_communities(&config, limit).await
+            })
+        },
+        Commands::Search { query, top_k, namespace } => {
+            tokio::runtime::Runtime::new()?.block_on(async {
+                run_search(&config, &query, top_k, namespace.as_deref().unwrap_or("default")).await
+            })
+        },
+        Commands::History { title, namespace } => {
+            tokio::runtime::Runtime::new()?.block_on(async {
+                run_history(&config, &title, namespace.as_deref().unwrap_or("default")).await
             })
         },
         Commands::Inspect { id } => run_inspect(&config.storage_path, &id),
@@ -175,30 +220,36 @@ async fn run_stats(config: &Config) -> Result<()> {
     let stats = vec![
         StatsRow { metric: "Storage Path".to_string(), value: config.storage_path.display().to_string() },
         StatsRow { metric: "Database File".to_string(), value: db_path.display().to_string() },
-        StatsRow { metric: "Total Entities".to_string(), value: db.count_entities()?.to_string().green().to_string() }
+        StatsRow { metric: "Total Entities (Latest)".to_string(), value: db.count_entities()?.to_string().green().to_string() }
     ];
 
     println!("{}", Table::new(stats).with(Modify::new(Rows::new(1..)).with(Alignment::right())).to_string());
     Ok(())
 }
 
-async fn run_list_entities(config: &Config, limit: usize) -> Result<()> {
+async fn run_list_entities(config: &Config, limit: usize, _namespace: &str) -> Result<()> {
     let db_path = config.storage_path.join("local-memory.db");
     let model = get_unified_model(config).await?;
     let db = SqliteDatabase::open(&db_path, model.dimension())?;
     
-    let entities = db.list_entities(limit)?;
+    let entities = db.list_entities_full(limit)?;
     if entities.is_empty() {
         println!("{}", "No entities found.".yellow());
         return Ok(());
     }
 
-    let rows: Vec<EntityRow> = entities.into_iter().map(|(n, t, d)| EntityRow { name: n, entity_type: t, description: d }).collect();
+    let rows: Vec<EntityRow> = entities.into_iter().map(|(n, t, c, d)| EntityRow {
+        name: n,
+        entity_type: t,
+        community_id: c.unwrap_or_else(|| "-".to_string()),
+        description: d
+    }).collect();
+
     println!("{}", Table::new(rows).to_string());
     Ok(())
 }
 
-async fn run_list_relations(config: &Config, limit: usize) -> Result<()> {
+async fn run_list_relations(config: &Config, limit: usize, _namespace: &str) -> Result<()> {
     let db_path = config.storage_path.join("local-memory.db");
     let model = get_unified_model(config).await?;
     let db = SqliteDatabase::open(&db_path, model.dimension())?;
@@ -214,7 +265,23 @@ async fn run_list_relations(config: &Config, limit: usize) -> Result<()> {
     Ok(())
 }
 
-async fn run_search(config: &Config, query: &str, top_k: usize) -> Result<()> {
+async fn run_list_communities(config: &Config, limit: usize) -> Result<()> {
+    let db_path = config.storage_path.join("local-memory.db");
+    let model = get_unified_model(config).await?;
+    let db = SqliteDatabase::open(&db_path, model.dimension())?;
+    
+    let communities = db.list_community_summaries(limit)?;
+    if communities.is_empty() {
+        println!("{}", "No communities found. They are generated in the background when observers are enabled.".yellow());
+        return Ok(());
+    }
+
+    let rows: Vec<CommunityRow> = communities.into_iter().map(|(id, title, summary)| CommunityRow { id, title, summary }).collect();
+    println!("{}", Table::new(rows).to_string());
+    Ok(())
+}
+
+async fn run_search(config: &Config, query: &str, top_k: usize, namespace: &str) -> Result<()> {
     let db_path = config.storage_path.join("local-memory.db");
     if !db_path.exists() {
         println!("{}", "Database file not found. Run 'lmcli init' first.".yellow());
@@ -225,11 +292,11 @@ async fn run_search(config: &Config, query: &str, top_k: usize) -> Result<()> {
     let db = SqliteDatabase::open(&db_path, model.dimension())?;
     let funnel = SearchFunnel::new_sqlite(&db, config);
 
-    println!("{} \"{}\"", "Searching for:".cyan().bold(), query);
+    println!("{} \"{}\" in namespace: {}", "Searching for:".cyan().bold(), query, namespace.yellow());
     println!();
 
     let query_vector = model.embed_one(query).await.map_err(|e| anyhow::anyhow!("Embedding failed: {}", e))?;
-    let results = funnel.hybrid_search(&query_vector, top_k)?;
+    let results = funnel.hybrid_search_with_namespace(&query_vector, top_k, namespace)?;
 
     if results.is_empty() {
         println!("{}", "No results found.".yellow());
@@ -243,6 +310,11 @@ async fn run_search(config: &Config, query: &str, top_k: usize) -> Result<()> {
     }).collect();
 
     println!("{}", Table::new(rows).with(Modify::new(Rows::new(1..)).with(Alignment::left())).to_string());
+    Ok(())
+}
+
+async fn run_history(_config: &Config, _title: &str, _namespace: &str) -> Result<()> {
+    println!("{}", "History command not yet fully implemented in storage layer".yellow());
     Ok(())
 }
 
@@ -268,12 +340,12 @@ async fn run_test(config: &Config) -> Result<()> {
     let v_short = slice_vector(&v_full, dim / 3);
     let v_bit = encode_bq(&v_full);
     
-    db.insert_document(test_id, "Diag", "Content", &serde_json::json!({"text": "Content", "test": true}), &v_full, &v_short, &v_bit)?;
+    db.insert_document_with_namespace(test_id, "Diag", "Content", &serde_json::json!({"text": "Content", "test": true}), &v_full, &v_short, &v_bit, "default")?;
     println!("  {} Inserted document: {}", "✓".green(), test_id);
 
     println!("{}", "[2/2] Testing search...".yellow());
     let funnel = SearchFunnel::new_sqlite(&db, config);
-    let results = funnel.search(&v_full, 10)?;
+    let results = funnel.search_with_namespace(&v_full, 10, "default")?;
 
     if results.iter().any(|r| r.id == test_id) {
         println!("  {} Found inserted document in search results", "✓".green());

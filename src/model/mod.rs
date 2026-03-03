@@ -19,11 +19,14 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
     // 1. Resolve Embedder
     let embedder: Arc<dyn EmbeddingProvider> = match config.embedding.provider {
         ModelProvider::HuggingFace => {
-            Arc::new(CandleProvider::new(
+            let p = CandleProvider::new(
                 &config.embedding.name,
                 config.model_path.clone(),
                 config.embedding.auto_download
-            ))
+            );
+            // CRITICAL: Load local models immediately since GenericUnifiedModel won't call their prepare()
+            p.prepare().await?; 
+            Arc::new(p)
         }
         ModelProvider::Ollama => {
             let host = config.embedding.base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
@@ -59,11 +62,13 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
                 Arc::new(OpenAIProvider::new(api_key).with_model(&ext_config.name))
             },
             ExtractorProvider::HuggingFace => {
-                Arc::new(CandleProvider::new(
+                let p = CandleProvider::new(
                     &ext_config.name,
                     config.model_path.clone(),
                     ext_config.auto_download
-                ))
+                );
+                p.prepare().await?; // Load local LLM immediately
+                Arc::new(p)
             },
             _ => {
                 anyhow::bail!("Unsupported extractor provider: {:?}", ext_config.provider);
@@ -71,11 +76,13 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
         }
     } else {
         // Default LLM: NuExtract-1.5 local
-        Arc::new(CandleProvider::new(
+        let p = CandleProvider::new(
             "numind/NuExtract-1.5",
             config.model_path.clone(),
             true
-        ))
+        );
+        p.prepare().await?;
+        Arc::new(p)
     };
 
     // 3. Return a Unified Model wrapper

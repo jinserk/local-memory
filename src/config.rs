@@ -118,7 +118,21 @@ pub struct Config {
     /// LLM extractor configuration for GraphRAG
     #[serde(default)]
     pub llm_extractor: Option<ExtractorConfig>,
+
+    /// Enable semantic chunking during ingestion
+    #[serde(default)]
+    pub semantic_chunking: bool,
+
+    /// Enable background observers (Git, Shell)
+    #[serde(default)]
+    pub enable_observers: bool,
+
+    /// Automatically terminate after N seconds of inactivity (0 to disable)
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout_seconds: u64,
 }
+
+fn default_idle_timeout() -> u64 { 3600 }
 
 fn default_storage_path() -> PathBuf { PathBuf::from(".local-memory/storage") }
 fn default_model_path() -> PathBuf { PathBuf::from(".local-memory/models") }
@@ -137,6 +151,9 @@ impl Default for Config {
                 api_key: None,
                 base_url: None,
             }),
+            semantic_chunking: false,
+            enable_observers: false,
+            idle_timeout_seconds: default_idle_timeout(),
         }
     }
 }
