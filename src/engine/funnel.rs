@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 pub struct SearchFunnel<'a> {
     db: &'a SqliteDatabase,
-    _config: &'a Config,
+    config: &'a Config,
 }
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct FunnelResult {
 
 impl<'a> SearchFunnel<'a> {
     pub fn new_sqlite(db: &'a SqliteDatabase, config: &'a Config) -> Self {
-        Self { db, _config: config }
+        Self { db, config }
     }
 
     pub fn search(&self, query_full: &[f32], top_k: usize) -> Result<Vec<FunnelResult>> {
@@ -29,15 +29,22 @@ impl<'a> SearchFunnel<'a> {
 
     pub fn search_with_namespace(&self, query_full: &[f32], top_k: usize, namespace: &str) -> Result<Vec<FunnelResult>> {
         let query_bit = encode_bq(query_full);
-        let s1_candidates = self.db.search_stage1_bit_with_namespace(&query_bit, 100, namespace)?;
+        let s1_candidates = self.db.search_stage1_bit_with_namespace(&query_bit, self.config.stage1_candidates, namespace)?;
         
         if s1_candidates.is_empty() {
             return Ok(vec![]);
         }
 
         let query_short = slice_vector(query_full, self.db.dimension() / 3);
+        let s2_results = self.db.search_stage2_short(&s1_candidates, &query_short, self.config.stage2_candidates)?;
+
+        let query_short = slice_vector(query_full, self.db.dimension() / 3);
         let s2_results = self.db.search_stage2_short(&s1_candidates, &query_short, 20)?;
 
+=======
+        let query_short = slice_vector(query_full, 256);
+        let s2_results = self.db.search_stage2_short(&s1_candidates, &query_short, self.config.stage2_candidates)?;
+>>>>>>> 829edf3 (feat(config): expose funnel stage parameters in config.json)
         let mut results = Vec::new();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?

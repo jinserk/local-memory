@@ -32,6 +32,10 @@ futures-util = "0.3.31"
 ocrs = "0.1.0"
 image = "0.25.5"
 petgraph = "0.7.1"
+kreuzberg = "0.1"
+pulldown-cmark = "0.12"
+scraper = "0.21"
+quick-xml = "0.37"
 
 [dev-dependencies]
 tempfile = "3.17.1"

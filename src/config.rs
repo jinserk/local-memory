@@ -134,9 +134,19 @@ pub struct Config {
     /// Automatically terminate after N seconds of inactivity (0 to disable)
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout_seconds: u64,
+
+    /// Number of candidates to retrieve in Stage 1 (Binary Quantization)
+    #[serde(default = "default_stage1_candidates")]
+    pub stage1_candidates: usize,
+
+    /// Number of candidates to retrieve in Stage 2 (Matryoshka Slicing)
+    #[serde(default = "default_stage2_candidates")]
+    pub stage2_candidates: usize,
 }
 
 fn default_idle_timeout() -> u64 { 3600 }
+fn default_stage1_candidates() -> usize { 100 }
+fn default_stage2_candidates() -> usize { 20 }
 
 fn default_storage_path() -> PathBuf { PathBuf::from(".local-memory/storage") }
 fn default_model_path() -> PathBuf { PathBuf::from(".local-memory/models") }
@@ -158,6 +168,8 @@ impl Default for Config {
             semantic_chunking: false,
             enable_observers: false,
             idle_timeout_seconds: default_idle_timeout(),
+            stage1_candidates: default_stage1_candidates(),
+            stage2_candidates: default_stage2_candidates(),
         }
     }
 }
