@@ -48,6 +48,8 @@ impl IngestionPipeline {
         let result = kreuzberg::extract_file(path, None, &config).await
             .map_err(|e| anyhow::anyhow!("Extraction failed for {:?}: {}", path, e))?;
 
+        eprintln!("DEBUG: Document content extracted ({})", result.mime_type);
+
         let mut file_metadata = metadata.clone();
         if let Some(obj) = file_metadata.as_object_mut() {
             obj.insert("source_file".to_string(), json!(path.to_string_lossy()));

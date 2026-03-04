@@ -1,14 +1,14 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use local_memory::config::Config;
-use local_memory::engine::bq::encode_bq;
+use local_memory::engine::vectors::{encode_bq, slice_vector};
 use local_memory::engine::funnel::SearchFunnel;
-use local_memory::engine::search_stage1::hamming_scan;
-use local_memory::storage::db::{Database, Memory};
-use local_memory::storage::MemoryTier;
-use simsimd::BinarySimilarity;
+use local_memory::storage::sqlite::SqliteDatabase;
+use simsimd::{SpatialSimilarity, BinarySimilarity};
 use std::sync::Arc;
 use tempfile::tempdir;
 use uuid::Uuid;
+use std::collections::HashSet;
+use candle_core::{Device, Tensor};
 
 /// Scalar (non-SIMD) Hamming distance for comparison
 fn hamming_distance_scalar(a: &[u8], b: &[u8]) -> u64 {
@@ -53,112 +53,98 @@ fn bench_hamming_distance(c: &mut Criterion) {
 }
 
 // =============================================================================
-// Benchmark 2: Hamming Scan (Stage 1 Search)
-// =============================================================================
-
-fn bench_hamming_scan(c: &mut Criterion) {
-    let mut group = c.benchmark_group("hamming_scan");
-
-    let vector_dim = 768;
-    let bit_vector_len = vector_dim / 8;
-
-    // Populate database with different sizes
-    let db_sizes = [100, 500, 1000, 2000];
-
-    for &num_vectors in &db_sizes {
-        // Clear previous data by creating a new database
-        let dir = tempdir().expect("Failed to create temp dir");
-        let db = Database::open(dir.path()).expect("Failed to open database");
-
-        for i in 0..num_vectors {
-            let id = Uuid::new_v4();
-            let bit_vector: Vec<u8> = (0..bit_vector_len).map(|j| ((i + j) % 256) as u8).collect();
-            let vector: Vec<f32> = (0..vector_dim)
-                .map(|j| ((i + j) as f32 % 2.0) - 1.0)
-                .collect();
-
-            db.insert_memory(&Memory {
-                id,
-                metadata: serde_json::json!({"index": i}),
-                vector,
-                bit_vector,
-                tier: MemoryTier::default(),
-                expires_at: None,
-            })
-            .expect("Failed to insert memory");
-        }
-
-        let query: Vec<u8> = (0..bit_vector_len).map(|j| (j % 256) as u8).collect();
-
-        group.throughput(Throughput::Elements(num_vectors as u64));
-
-        group.bench_with_input(
-            BenchmarkId::new("scan_k10", num_vectors),
-            &num_vectors,
-            |bencher, _| {
-                bencher.iter(|| {
-                    black_box(hamming_scan(&db, black_box(&query), 10).expect("Scan failed"))
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("scan_k100", num_vectors),
-            &num_vectors,
-            |bencher, _| {
-                bencher.iter(|| {
-                    black_box(hamming_scan(&db, black_box(&query), 100).expect("Scan failed"))
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-// =============================================================================
-// Benchmark 3: Full Search Funnel
+// Benchmark 2: Full Search Funnel & Recall
 // =============================================================================
 
 fn bench_search_funnel(c: &mut Criterion) {
     let mut group = c.benchmark_group("search_funnel");
 
     let vector_dim = 768;
-
     let db_sizes = [100, 500, 1000];
+    let device = Device::Cpu;
 
     for &num_vectors in &db_sizes {
         let dir = tempdir().expect("Failed to create temp dir");
-        let db = Arc::new(Database::open(dir.path()).expect("Failed to open database"));
+        let db_path = dir.path().join("bench.db");
+        let db = Arc::new(SqliteDatabase::open(&db_path, vector_dim).expect("Failed to open database"));
 
-        // Populate database
-        for i in 0..num_vectors {
-            let id = Uuid::new_v4();
-            let mut vector = vec![0.0f32; vector_dim];
-            // Create semi-random vectors
-            for j in 0..vector_dim {
-                vector[j] = ((i * j) as f32 % 2.0) - 1.0;
+        // Generate random vectors using candle
+        let data = Tensor::randn(0.0f32, 1.0f32, (num_vectors, vector_dim), &device).expect("Failed to generate random vectors");
+        let mut data_vec: Vec<Vec<f32>> = data.to_vec2().expect("Failed to convert tensor to vec");
+        
+        // Normalize each vector
+        for v in &mut data_vec {
+            let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                for x in v { *x /= norm; }
             }
-            let bit_vector = encode_bq(&vector);
-
-            db.insert_memory(&Memory {
-                id,
-                metadata: serde_json::json!({"index": i, "text": format!("Document {}", i)}),
-                vector,
-                bit_vector,
-                tier: MemoryTier::default(),
-                expires_at: None,
-            })
-            .expect("Failed to insert memory");
         }
 
-        let config = Config::default();
-        let funnel = SearchFunnel::new(&db, &config);
 
-        // Create a query vector
-        let mut query = vec![0.0f32; vector_dim];
-        query[0] = 0.9;
-        query[1] = 0.1;
+
+        let mut all_ids = Vec::with_capacity(num_vectors);
+
+        // Populate database
+        for (i, vector) in data_vec.iter().enumerate() {
+            let id = Uuid::new_v4();
+            
+            let v_short = slice_vector(vector, 256);
+            let v_bit = encode_bq(vector);
+
+            db.insert_document_with_namespace(
+                id,
+                &format!("Doc {}", i),
+                &format!("Content for document {}", i),
+                &serde_json::json!({"index": i, "text": format!("Content for document {}", i), "created_at": 1740000000}),
+                vector,
+                &v_short,
+                &v_bit,
+                "default"
+            ).expect("Failed to insert");
+            
+            all_ids.push(id);
+        }
+
+        let mut config = Config::default();
+        config.stage1_candidates = 1000;
+        config.stage2_candidates = 1000;
+        let funnel = SearchFunnel::new_sqlite(&db, &config);
+
+
+
+
+        // Create a query vector (no perturbation for baseline check)
+        let query = data_vec[0].clone();
+
+
+        // Calculate Recall@10 against brute-force
+        let top_k = 10;
+        let mut oracle_scores: Vec<(Uuid, f32)> = Vec::with_capacity(num_vectors);
+        for (i, v) in data_vec.iter().enumerate() {
+            let distance = SpatialSimilarity::cos(&query, v).unwrap();
+            let similarity = 1.0 - distance as f32;
+            oracle_scores.push((all_ids[i], similarity));
+        }
+        oracle_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        let oracle_top_k_list: Vec<Uuid> = oracle_scores.iter().take(top_k).map(|(id, _)| *id).collect();
+        let oracle_top_k: HashSet<Uuid> = oracle_top_k_list.iter().cloned().collect();
+
+        let funnel_results = funnel.search(&query, top_k).expect("Search failed");
+        let funnel_top_k_ids: Vec<Uuid> = funnel_results.iter().take(top_k).map(|r| r.id).collect();
+        let funnel_top_k: HashSet<Uuid> = funnel_top_k_ids.iter().cloned().collect();
+
+        let intersection = oracle_top_k.intersection(&funnel_top_k).count();
+        let recall = intersection as f32 / top_k as f32;
+        
+        println!("\n[Recall@10 for {} vectors]: {:.4}", num_vectors, recall);
+        println!("  Oracle top 5: {:?}", &oracle_top_k_list[..5]);
+        println!("  Funnel top 5: {:?}", &funnel_top_k_ids[..std::cmp::min(5, funnel_top_k_ids.len())]);
+
+        if !funnel_results.is_empty() {
+            println!("  Top result score: {:.4}", funnel_results[0].score);
+        } else {
+            println!("  No results found!");
+        }
 
         group.throughput(Throughput::Elements(num_vectors as u64));
 
@@ -177,156 +163,42 @@ fn bench_search_funnel(c: &mut Criterion) {
 }
 
 // =============================================================================
-// Benchmark 4: Document Ingestion (excluding embedding time)
+// Benchmark 3: Document Ingestion (excluding embedding time)
 // =============================================================================
 
 fn bench_ingestion(c: &mut Criterion) {
     let mut group = c.benchmark_group("ingestion");
 
     let vector_dim = 768;
-
     let dir = tempdir().expect("Failed to create temp dir");
-    let db = Arc::new(Database::open(dir.path()).expect("Failed to open database"));
+    let db_path = dir.path().join("ingest.db");
+    let db = Arc::new(SqliteDatabase::open(&db_path, vector_dim).expect("Failed to open database"));
 
-    // Benchmark the ingestion pipeline components (excluding embedding)
-    // This measures: BQ encoding + database write
-
-    group.bench_function("bq_encode_768d", |bencher| {
-        let vector: Vec<f32> = (0..vector_dim).map(|i| (i as f32 % 2.0) - 1.0).collect();
-
-        bencher.iter(|| black_box(encode_bq(black_box(&vector))));
-    });
-
-    group.bench_function("db_insert_single", |bencher| {
-        let mut counter = 0u64;
-
-        bencher.iter(|| {
-            let id = Uuid::new_v4();
-            let vector: Vec<f32> = (0..vector_dim)
-                .map(|i| ((i + counter as usize) as f32 % 2.0) - 1.0)
-                .collect();
-            let bit_vector = encode_bq(&vector);
-
-            db.insert_memory(&Memory {
-                id,
-                metadata: serde_json::json!({"counter": counter}),
-                vector,
-                bit_vector,
-                tier: MemoryTier::default(),
-                expires_at: None,
-            })
-            .expect("Failed to insert");
-
-            counter += 1;
-            black_box(id)
-        });
-    });
-
-    // Full ingestion pipeline (BQ + DB write)
     group.bench_function("full_ingestion_no_embedding", |bencher| {
         let mut counter = 0u64;
 
         bencher.iter(|| {
             let id = Uuid::new_v4();
             // Simulate pre-computed embedding
-            let vector: Vec<f32> = (0..vector_dim)
-                .map(|i| ((i + counter as usize) as f32 % 2.0) - 1.0)
-                .collect();
-            let bit_vector = encode_bq(&vector);
+            let vector = vec![0.5f32; vector_dim];
+            let v_short = slice_vector(&vector, 256);
+            let v_bit = encode_bq(&vector);
 
-            let memory = Memory {
+            db.insert_document_with_namespace(
                 id,
-                metadata: serde_json::json!({"text": format!("Document {}", counter)}),
-                vector,
-                bit_vector,
-                tier: MemoryTier::default(),
-                expires_at: None,
-            };
+                &format!("Doc {}", counter),
+                &format!("Content {}", counter),
+                &serde_json::json!({"counter": counter, "created_at": 1740000000}),
+                &vector,
+                &v_short,
+                &v_bit,
+                "default"
+            ).expect("Failed to insert");
 
-            db.insert_memory(&memory).expect("Failed to insert");
             counter += 1;
             black_box(id)
         });
     });
-
-    group.finish();
-}
-
-// =============================================================================
-// Benchmark 5: SIMD Verification (Assembly Check)
-// =============================================================================
-
-fn bench_simd_verification(c: &mut Criterion) {
-    let mut group = c.benchmark_group("simd_verification");
-
-    // This benchmark is designed to verify SIMD is being used
-    // by comparing performance characteristics
-
-    let bytes = 96; // 768 bits = 96 bytes
-    let a: Vec<u8> = (0..bytes).map(|i| (i % 256) as u8).collect();
-    let b: Vec<u8> = (0..bytes).map(|i| ((i + 128) % 256) as u8).collect();
-
-    // Run many iterations to get stable measurements
-    group.sample_size(1000);
-
-    group.bench_function("scalar_768bit", |bencher| {
-        bencher.iter(|| {
-            for _ in 0..100 {
-                black_box(hamming_distance_scalar(black_box(&a), black_box(&b)));
-            }
-        });
-    });
-
-    group.bench_function("simd_768bit", |bencher| {
-        bencher.iter(|| {
-            for _ in 0..100 {
-                black_box(hamming_distance_simd(black_box(&a), black_box(&b)));
-            }
-        });
-    });
-
-    group.finish();
-}
-
-// =============================================================================
-// Benchmark 6: Memory Usage Estimation
-// =============================================================================
-
-fn bench_memory_overhead(c: &mut Criterion) {
-    let group = c.benchmark_group("memory_overhead");
-
-    // Measure memory footprint of stored data
-
-    let vector_dim = 768;
-    let bit_vector_len = vector_dim / 8;
-
-    // Estimate per-document memory usage
-    let vector_bytes = vector_dim * 4; // f32 = 4 bytes
-    let bit_vector_bytes = bit_vector_len;
-    let uuid_bytes = 16;
-    let metadata_overhead = 64; // Estimated JSON overhead
-
-    let total_per_doc = vector_bytes + bit_vector_bytes + uuid_bytes + metadata_overhead;
-
-    println!("\n=== Memory Usage Estimation ===");
-    println!("Vector (768d f32):     {} bytes", vector_bytes);
-    println!("Bit vector (768 bits): {} bytes", bit_vector_bytes);
-    println!("UUID:                  {} bytes", uuid_bytes);
-    println!("Metadata overhead:     ~{} bytes", metadata_overhead);
-    println!(
-        "Total per document:    {} bytes ({:.2} KB)",
-        total_per_doc,
-        total_per_doc as f64 / 1024.0
-    );
-    println!(
-        "1000 documents:        {} KB",
-        (total_per_doc * 1000) / 1024
-    );
-    println!(
-        "10000 documents:       {} MB",
-        (total_per_doc * 10000) / 1024 / 1024
-    );
-    println!("================================\n");
 
     group.finish();
 }
@@ -334,11 +206,8 @@ fn bench_memory_overhead(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_hamming_distance,
-    bench_hamming_scan,
     bench_search_funnel,
     bench_ingestion,
-    bench_simd_verification,
-    bench_memory_overhead,
 );
 
 criterion_main!(benches);

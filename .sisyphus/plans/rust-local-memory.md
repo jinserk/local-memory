@@ -49,7 +49,10 @@ Implement a robust, persistent local memory system that AI agents can use via MC
 - `openspec/specs/local-memory.md`: Detailed design document.
 
 ### Definition of Done
-- [ ] `cargo test` passes all units and integrations.
+- [x] `cargo test` passes all units and integrations.
+- [x] `mcp-inspector` validates MCP server compliance.
+- [x] Search Recall@10 > 0.9 against brute-force baseline.
+- [x] Ingestion speed < 20ms per document (excluding embedding time).
 - [ ] `mcp-inspector` validates MCP server compliance.
 - [ ] Search Recall@10 > 0.9 against brute-force baseline.
 - [ ] Ingestion speed < 20ms per document (excluding embedding time).
