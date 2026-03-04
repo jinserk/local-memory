@@ -23,24 +23,30 @@ impl GraphObserver {
     }
 
     pub async fn run(mut self, mut rx: broadcast::Receiver<KnowledgeEvent>) {
-        
-        // 1. Bootstrap from DB
         if let Ok(rels) = self.context.db.list_all_relationships() {
             for (s, t, p) in rels {
                 self.add_edge(s, t, p);
             }
         }
 
-        // 2. Event Loop
         loop {
             tokio::select! {
-                Ok(event) = rx.recv() => {
-                    match event {
-                        KnowledgeEvent::RelationshipInserted { source_id, target_id, predicate } => {
-                            self.add_edge(source_id, target_id, predicate);
-                            self.recluster_and_update_db().await;
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            match event {
+                                KnowledgeEvent::EntityInserted { id, .. } => {
+                                    self.nodes.entry(id).or_insert_with(|| self.graph.add_node(id));
+                                    self.recluster_and_update_db().await;
+                                }
+                                KnowledgeEvent::RelationshipInserted { source_id, target_id, predicate } => {
+                                    self.add_edge(source_id, target_id, predicate);
+                                    self.recluster_and_update_db().await;
+                                }
+                                _ => {}
+                            }
                         }
-                        _ => {}
+                        Err(_) => {}
                     }
                 }
             }
@@ -60,7 +66,6 @@ impl GraphObserver {
             communities.insert(node, format!("comm_{}", node.index()));
         }
 
-        // 2 iterations of LP
         for _ in 0..2 {
             let mut next_communities = communities.clone();
             for node in self.graph.node_indices() {
@@ -91,8 +96,7 @@ impl GraphObserver {
             let comm_ids: Vec<String> = updated_comm_ids.into_iter().collect();
             let _ = self.context.event_tx.send(crate::KnowledgeEvent::CommunitiesUpdated { comm_ids });
         }
-}
-
+    }
 }
 
 pub async fn spawn_graph_observer(context: Arc<McpContext>, rx: broadcast::Receiver<KnowledgeEvent>) {

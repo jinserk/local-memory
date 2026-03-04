@@ -14,7 +14,6 @@ impl CommunityService {
     }
 
     pub async fn run(self, mut rx: broadcast::Receiver<KnowledgeEvent>) {
-
         loop {
             tokio::select! {
                 Ok(event) = rx.recv() => {
@@ -33,7 +32,9 @@ impl CommunityService {
 
     async fn summarize_community(&self, comm_id: &str) -> anyhow::Result<()> {
         let members = self.context.db.list_community_members(comm_id)?;
-        if members.is_empty() { return Ok(()); }
+        if members.is_empty() { 
+            return Ok(()); 
+        }
 
         let context_text = members.iter()
             .map(|(name, desc)| format!("- {}: {}", name, desc))
@@ -41,8 +42,6 @@ impl CommunityService {
             .join("\n");
 
         // Use the named "summary" template via TEMPLATE:<name> prefix.
-        // CandleProvider::format_prompt recognises this tag and applies the
-        // correct prompt template from models.yaml.
         let prompt = format!("TEMPLATE:summary\n{}", context_text);
 
         let response = self.context.model.complete(&prompt).await?;
