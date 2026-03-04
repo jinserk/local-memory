@@ -95,55 +95,37 @@ Wave 1 (Foundation & Specs): [x]
 ├── Task 2: Project Scaffolding (MCP Boilerplate) [quick] [x]
 ├── Task 3: SQLite Storage Setup (Schema/Metadata) [unspecified-low] [x]
 └── Task 4: JSON Configuration Module [quick] [x]
-├── Task 1: Initialize OpenSpec SDD [writing]
-├── Task 2: Project Scaffolding (MCP Boilerplate) [quick]
-├── Task 3: Fjall Storage Setup (Schema/Metadata) [unspecified-low]
-└── Task 4: JSON Configuration Module [quick]
 
 Wave 2 (Embedding & Ingestion): [x]
 ├── Task 5: Candle Integration (Nomic model loader) [unspecified-high] [x]
 ├── Task 6: Binary Quantization (BQ) Encoder [deep] [x]
 ├── Task 7: Matryoshka Slicing Logic [quick] [x]
 └── Task 8: Document Ingestion Pipeline [unspecified-high] [x]
-├── Task 5: Candle Integration (Nomic model loader) [unspecified-high]
-├── Task 6: Binary Quantization (BQ) Encoder [deep]
-├── Task 7: Matryoshka Slicing Logic [quick]
-└── Task 8: Document Ingestion Pipeline [unspecified-high]
 
 Wave 3 (Search Funnel Implementation): [x]
 ├── Task 9: Stage 1 Search (Hamming + SIMD) [deep] [x]
-├── Task 10: Stage 2 Search (Matryoshka Cosine) [deep] [x]
+├── Task 10: Stage 2 Search (Matryoshka Cosine) [deep] [x] [x] [x]
 ├── Task 11: Stage 3 Search (Full Re-rank) [unspecified-high] [x]
 └── Task 12: Funnel Coordinator (Multi-stage Orchestrator) [artistry] [x]
-├── Task 9: Stage 1 Search (Hamming + SIMD) [deep]
-├── Task 10: Stage 2 Search (Matryoshka Cosine) [deep]
-├── Task 11: Stage 3 Search (Full Re-rank) [unspecified-high]
-└── Task 12: Funnel Coordinator (Multi-stage Orchestrator) [artistry]
 
 Wave 4 (Integration & Refinement): [x]
 ├── Task 13: MCP Tool Wrappers (insert/search) [quick] [x]
 ├── Task 14: Recall Benchmarking Suite [unspecified-high] [x]
 ├── Task 15: Memory Tiering (Episodic/Semantic) [deep] [x]
 └── Task 16: CLI/TUI Diagnostics Tool [visual-engineering] [x]
-├── Task 13: MCP Tool Wrappers (insert/search) [quick]
-├── Task 14: Recall Benchmarking Suite [unspecified-high]
-├── Task 15: Memory Tiering (Episodic/Semantic) [deep]
-└── Task 16: CLI/TUI Diagnostics Tool [visual-engineering]
 
 Wave 5 (Verification & Cleanup): [x]
 ├── Task 17: E2E MCP Integration Tests [deep] [x]
 ├── Task 18: Performance Profiling & SIMD Check [ultrabrain] [x]
 └── Task 19: Documentation & Deployment Guide [writing] [x]
-├── Task 17: E2E MCP Integration Tests [deep]
-├── Task 18: Performance Profiling & SIMD Check [ultrabrain]
-└── Task 19: Documentation & Deployment Guide [writing]
 
-Wave FINAL:
-├── Task F1: Plan Compliance Audit (oracle)
-├── Task F2: Code Quality Review (unspecified-high)
-├── Task F3: Integration QA (unspecified-high)
-└── Task F4: Scope Fidelity Check (deep)
-```
+Wave FINAL: [x]
+├── Task F0: Expose funnel stage parameters in config.json [quick] [x]
+├── Task F1: Plan Compliance Audit (oracle) [x]
+├── Task F2: Code Quality Review (unspecified-high) [x]
+├── Task F3: Integration QA (unspecified-high) [x]
+├── Task F4: Scope Fidelity Check (deep) [x]
+└── Task F5: Implement Stage 3 Search (Full Re-rank) (deep) [x]
 
 ---
 
