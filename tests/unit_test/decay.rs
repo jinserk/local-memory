@@ -14,7 +14,8 @@ fn test_time_decay_ranking() -> anyhow::Result<()> {
     let config = Config::default();
     let funnel = SearchFunnel::new_sqlite(&db, &config);
 
-    let v = vec![0.5; dim];
+    let v_old = vec![0.5; dim];
+    let v_new = vec![0.5; dim];
     let v_short = vec![0.5; dim/3];
     let v_bit = vec![0u8; dim/8];
 
@@ -24,14 +25,20 @@ fn test_time_decay_ranking() -> anyhow::Result<()> {
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() - (10 * 24 * 3600);
     
-    db.insert_document_with_namespace(id_old, "Old", "Content", &json!({"created_at": old_time}), &v, &v_short, &v_bit, "default")?;
+    db.insert_document_with_namespace(id_old, "Old", "Content", &json!({"created_at": old_time}), &v_old, &v_short, &v_bit, "default")?;
 
     // 2. New document (Now)
     let id_new = Uuid::new_v4();
-    db.insert_document_with_namespace(id_new, "New", "Content", &json!({}), &v, &v_short, &v_bit, "default")?;
+    // Use a slightly different vector to ensure non-zero distance if needed, 
+    // but here we want to test tie-breaking, so we use a very similar one.
+    // Actually, let's use a slightly different one so distance is not exactly 0.
+    let mut v_query = v_new.clone();
+    v_query[0] += 0.01; 
+    
+    db.insert_document_with_namespace(id_new, "New", "Content", &json!({}), &v_new, &v_short, &v_bit, "default")?;
 
-    // Search with identical vector
-    let results = funnel.search_with_namespace(&v, 10, "default")?;
+    // Search with query vector
+    let results = funnel.search_with_namespace(&v_query, 10, "default")?;
     
     assert_eq!(results.len(), 2);
     // New one should be first (lower score is better distance, decay increases distance for old ones)
@@ -40,3 +47,4 @@ fn test_time_decay_ranking() -> anyhow::Result<()> {
 
     Ok(())
 }
+

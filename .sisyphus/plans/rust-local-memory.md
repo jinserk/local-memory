@@ -134,10 +134,12 @@ Wave FINAL:
 
 ## Final Verification Wave
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
-- [ ] F2. **Code Quality Review** — `unspecified-high`
-- [ ] F3. **Integration QA** — `unspecified-high`
+- [x] F0. **Expose funnel stage parameters in config.json** — `quick`
+- [x] F1. **Plan Compliance Audit** — `oracle`
+- [x] F2. **Code Quality Review** — `unspecified-high`
+- [x] F3. **Integration QA** — `unspecified-high`
 - [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F5. **Implement Stage 3 Search (Full Re-rank)** — `deep`
 
 ---
 

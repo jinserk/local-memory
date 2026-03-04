@@ -208,11 +208,14 @@ impl SqliteDatabase {
         )?;
         let rows = stmt.query_map(params![query_bit, namespace, limit], |row| {
             let id_str: String = row.get(0)?;
-            Ok(Uuid::parse_str(&id_str).unwrap())
+            Ok(id_str)
         })?;
         
         let mut results = Vec::new();
-        for row in rows { results.push(row?); }
+        for row in rows { 
+            let id_str = row?;
+            results.push(Uuid::parse_str(&id_str)?); 
+        }
         Ok(results)
     }
 
@@ -227,10 +230,36 @@ impl SqliteDatabase {
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![query_short.as_bytes(), limit], |row| {
             let id_str: String = row.get(0)?;
-            Ok((Uuid::parse_str(&id_str).unwrap(), row.get(1)?))
+            let distance: f32 = row.get(1)?;
+            Ok((id_str, distance))
         })?;
         let mut results = Vec::new();
-        for row in rows { results.push(row?); }
+        for row in rows { 
+            let (id_str, dist) = row?;
+            results.push((Uuid::parse_str(&id_str)?, dist)); 
+        }
+        Ok(results)
+    }
+
+    pub fn search_stage3_full(&self, ids: &[Uuid], query_full: &[f32], limit: usize) -> Result<Vec<(Uuid, f32)>> {
+        if ids.is_empty() { return Ok(vec![]); }
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let id_list: Vec<String> = ids.iter().map(|id| format!("'{}'", id)).collect();
+        let sql = format!(
+            "SELECT id, distance FROM vec_full_docs WHERE id IN ({}) AND embedding MATCH ? AND k = ? ORDER BY distance ASC",
+            id_list.join(",")
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![query_full.as_bytes(), limit], |row| {
+            let id_str: String = row.get(0)?;
+            let distance: f32 = row.get(1)?;
+            Ok((id_str, distance))
+        })?;
+        let mut results = Vec::new();
+        for row in rows { 
+            let (id_str, dist) = row?;
+            results.push((Uuid::parse_str(&id_str)?, dist)); 
+        }
         Ok(results)
     }
 
@@ -356,10 +385,14 @@ impl SqliteDatabase {
         let rows = stmt.query_map([], |row| {
             let s: String = row.get(0)?;
             let t: String = row.get(1)?;
-            Ok((Uuid::parse_str(&s).unwrap(), Uuid::parse_str(&t).unwrap(), row.get(2)?))
+            let p: String = row.get(2)?;
+            Ok((s, t, p))
         })?;
         let mut results = Vec::new();
-        for row in rows { results.push(row?); }
+        for row in rows { 
+            let (s, t, p) = row?;
+            results.push((Uuid::parse_str(&s)?, Uuid::parse_str(&t)?, p)); 
+        }
         Ok(results)
     }
 
@@ -407,3 +440,4 @@ impl SqliteDatabase {
         Ok(results)
     }
 }
+
