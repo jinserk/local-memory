@@ -32,21 +32,18 @@ impl GraphObserver {
         loop {
             tokio::select! {
                 result = rx.recv() => {
-                    match result {
-                        Ok(event) => {
-                            match event {
-                                KnowledgeEvent::EntityInserted { id, .. } => {
-                                    self.nodes.entry(id).or_insert_with(|| self.graph.add_node(id));
-                                    self.recluster_and_update_db().await;
-                                }
-                                KnowledgeEvent::RelationshipInserted { source_id, target_id, predicate } => {
-                                    self.add_edge(source_id, target_id, predicate);
-                                    self.recluster_and_update_db().await;
-                                }
-                                _ => {}
+                    if let Ok(event) = result {
+                        match event {
+                            KnowledgeEvent::EntityInserted { id, .. } => {
+                                self.nodes.entry(id).or_insert_with(|| self.graph.add_node(id));
+                                self.recluster_and_update_db().await;
                             }
+                            KnowledgeEvent::RelationshipInserted { source_id, target_id, predicate } => {
+                                self.add_edge(source_id, target_id, predicate);
+                                self.recluster_and_update_db().await;
+                            }
+                            _ => {}
                         }
-                        Err(_) => {}
                     }
                 }
             }

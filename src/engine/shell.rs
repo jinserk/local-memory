@@ -12,10 +12,10 @@ pub async fn spawn_shell_observer(context: Arc<McpContext>) {
 
     tokio::spawn(async move {
         loop {
-            if let Some(history_path) = get_history_path() {
-                if let Ok(file) = File::open(history_path) {
+            if let Some(history_path) = get_history_path()
+                && let Ok(file) = File::open(history_path) {
                     let reader = BufReader::new(file);
-                    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+                    let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
                     
                     if lines.len() > last_processed_line {
                         for line in &lines[last_processed_line..] {
@@ -31,7 +31,6 @@ pub async fn spawn_shell_observer(context: Arc<McpContext>) {
                         last_processed_line = lines.len();
                     }
                 }
-            }
             sleep(Duration::from_secs(30)).await;
         }
     });

@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::engine::vectors::{encode_bq, slice_vector};
 use crate::storage::sqlite::SqliteDatabase;
+use crate::engine::vectors::{encode_bq, slice_vector};
 use anyhow::Result;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -27,31 +27,18 @@ impl<'a> SearchFunnel<'a> {
         self.search_with_namespace(query_full, top_k, "default")
     }
 
-    pub fn search_with_namespace(
-        &self,
-        query_full: &[f32],
-        top_k: usize,
-        namespace: &str,
-    ) -> Result<Vec<FunnelResult>> {
+    pub fn search_with_namespace(&self, query_full: &[f32], top_k: usize, namespace: &str) -> Result<Vec<FunnelResult>> {
         // 1. Stage 1: Binary Quantization Scan
         let query_bit = encode_bq(query_full);
-        let s1_candidates = self.db.search_stage1_bit_with_namespace(
-            &query_bit,
-            self.config.stage1_candidates,
-            namespace,
-        )?;
-
+        let s1_candidates = self.db.search_stage1_bit_with_namespace(&query_bit, self.config.stage1_candidates, namespace)?;
+        
         if s1_candidates.is_empty() {
             return Ok(vec![]);
         }
 
         // 2. Stage 2: Matryoshka Slicing Re-rank
         let query_short = slice_vector(query_full, self.db.dimension() / 3);
-        let s2_results = self.db.search_stage2_short(
-            &s1_candidates,
-            &query_short,
-            self.config.stage2_candidates,
-        )?;
+        let s2_results = self.db.search_stage2_short(&s1_candidates, &query_short, self.config.stage2_candidates)?;
 
         if s2_results.is_empty() {
             return Ok(vec![]);
@@ -59,9 +46,7 @@ impl<'a> SearchFunnel<'a> {
 
         // 3. Stage 3: Full Re-rank
         let s2_ids: Vec<Uuid> = s2_results.iter().map(|(id, _)| *id).collect();
-        let s3_results = self
-            .db
-            .search_stage3_full(&s2_ids, query_full, s2_ids.len())?;
+        let s3_results = self.db.search_stage3_full(&s2_ids, query_full, s2_ids.len())?;
 
         let mut results = Vec::new();
         let now = std::time::SystemTime::now()
@@ -70,12 +55,9 @@ impl<'a> SearchFunnel<'a> {
 
         for (id, base_score) in s3_results.into_iter() {
             if let Some((_, metadata)) = self.db.get_document_content(id)? {
-                let created_at = metadata
-                    .get("created_at")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(now);
+                let created_at = metadata.get("created_at").and_then(|v| v.as_u64()).unwrap_or(now);
                 let age_days = (now - created_at) as f32 / (24.0 * 3600.0);
-
+                
                 // Exponential decay (simple version)
                 let decay_lambda = 0.01;
                 let decay_multiplier = (decay_lambda * age_days).exp();
@@ -91,29 +73,20 @@ impl<'a> SearchFunnel<'a> {
         }
 
         // Sort by score ascending (lower is better for distance)
-        results.sort_by(|a, b| {
-            a.score
-                .partial_cmp(&b.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
+        results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        
         Ok(results.into_iter().take(top_k).collect())
     }
 
-    pub fn hybrid_search_with_namespace(
-        &self,
-        query_vector: &[f32],
-        top_k: usize,
-        namespace: &str,
-    ) -> Result<Vec<FunnelResult>> {
+    pub fn hybrid_search_with_namespace(&self, query_vector: &[f32], top_k: usize, namespace: &str) -> Result<Vec<FunnelResult>> {
         // 1. Vector Search
         let mut results = self.search_with_namespace(query_vector, top_k, namespace)?;
 
         // 2. Thematic Fallback
-        let is_poor_result = results.is_empty() || results.get(0).map_or(true, |r| r.score > 1.2);
-
-        if is_poor_result {
-            if let Ok(Some(global_ctx)) = self.search_global_summaries() {
+        let is_poor_result = results.is_empty() || results.first().is_none_or(|r| r.score > 1.2);
+        
+        if is_poor_result
+            && let Ok(Some(global_ctx)) = self.search_global_summaries() {
                 if !results.is_empty() {
                     results[0].context = Some(json!({"thematic_summary": global_ctx}));
                 } else {
@@ -125,28 +98,23 @@ impl<'a> SearchFunnel<'a> {
                     });
                 }
             }
-        }
 
         // 3. Enhance with Graph Context
         for res in &mut results {
-            if res.id == Uuid::nil() {
-                continue;
-            }
+            if res.id == Uuid::nil() { continue; }
             if let Some(text) = res.metadata.get("text").and_then(|v| v.as_str()) {
                 for word in text.split_whitespace() {
                     let clean = word.trim_matches(|c: char| !c.is_alphanumeric());
-                    if clean.len() > 3 && clean.chars().next().map_or(false, |c| c.is_uppercase()) {
-                        if let Ok(nb) = self.db.get_neighborhood_with_namespace(clean, namespace) {
-                            if nb.get("error").is_none() {
+                    if clean.len() > 3 && clean.chars().next().is_some_and(|c| c.is_uppercase())
+                        && let Ok(nb) = self.db.get_neighborhood_with_namespace(clean, namespace)
+                            && nb.get("error").is_none() {
                                 res.context = Some(nb);
-                                break;
+                                break; 
                             }
-                        }
-                    }
                 }
             }
         }
-
+        
         Ok(results)
     }
 
@@ -155,8 +123,7 @@ impl<'a> SearchFunnel<'a> {
         if summaries_list.is_empty() {
             Ok(None)
         } else {
-            let summaries: Vec<Value> = summaries_list
-                .into_iter()
+            let summaries: Vec<Value> = summaries_list.into_iter()
                 .map(|(_, title, summary)| json!({ "title": title, "summary": summary }))
                 .collect();
             Ok(Some(json!(summaries)))

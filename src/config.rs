@@ -5,16 +5,13 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum MemoryTier {
     Episodic,
+    #[default]
     Semantic,
 }
 
-impl Default for MemoryTier {
-    fn default() -> Self {
-        MemoryTier::Semantic
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TierConfig {
@@ -33,18 +30,15 @@ impl Default for TierConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ModelProvider {
+    #[default]
     HuggingFace,
     Local,
     Ollama,
     OpenAI,
 }
 
-impl Default for ModelProvider {
-    fn default() -> Self {
-        Self::HuggingFace
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ModelConfig {
@@ -180,13 +174,11 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(".local-memory/config.json"));
 
-        if config_path.exists() {
-            if let Ok(content) = fs::read_to_string(&config_path) {
-                if let Ok(config) = serde_json::from_str(&content) {
+        if config_path.exists()
+            && let Ok(content) = fs::read_to_string(&config_path)
+                && let Ok(config) = serde_json::from_str(&content) {
                     return config;
                 }
-            }
-        }
 
         Config::default()
     }

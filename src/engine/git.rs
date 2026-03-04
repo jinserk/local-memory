@@ -10,9 +10,9 @@ pub async fn spawn_git_observer(context: Arc<McpContext>) {
 
     tokio::spawn(async move {
         loop {
-            if let Ok(current_commit) = get_latest_commit() {
-                if current_commit != last_commit && !current_commit.is_empty() {
-                    eprintln!("[git] New commit detected: {}", current_commit);
+            if let Ok(current_commit) = get_latest_commit()
+                && current_commit != last_commit && !current_commit.is_empty() {
+                    eprintln!("DEBUG: New git commit detected: {}", current_commit);
                     
                     if let Ok(summary) = get_commit_summary(&current_commit) {
                         // Truncate to first 500 chars to avoid hogging the LLM for huge diffs.
@@ -26,7 +26,6 @@ pub async fn spawn_git_observer(context: Arc<McpContext>) {
                     
                     last_commit = current_commit;
                 }
-            }
             sleep(Duration::from_secs(60)).await;
         }
     });

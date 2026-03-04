@@ -53,9 +53,6 @@ Implement a robust, persistent local memory system that AI agents can use via MC
 - [x] `mcp-inspector` validates MCP server compliance.
 - [x] Search Recall@10 > 0.9 against brute-force baseline.
 - [x] Ingestion speed < 20ms per document (excluding embedding time).
-- [ ] `mcp-inspector` validates MCP server compliance.
-- [ ] Search Recall@10 > 0.9 against brute-force baseline.
-- [ ] Ingestion speed < 20ms per document (excluding embedding time).
 
 ### Must Have
 - MCP `tools` for `memory_insert` and `memory_search`.

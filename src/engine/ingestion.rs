@@ -91,8 +91,10 @@ impl IngestionPipeline {
 
     async fn process_chunk(&self, text: &str, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
         let id = Uuid::new_v4();
+        eprintln!("DEBUG: Embedding chunk (len={})...", text.len());
         let v_full = self.embedder.embed_one(text).await
             .map_err(|e| anyhow::anyhow!("Embedding failed: {}", e))?;
+        
         let v_short = slice_vector(&v_full, self.db.dimension() / 3);
         let v_bit = encode_bq(&v_full);
 
@@ -120,7 +122,9 @@ impl IngestionPipeline {
         }
 
         if let Some(llm) = &self.llm {
+            eprintln!("DEBUG: Extracting Knowledge Graph from chunk...");
             self.extract_and_store_graph(text, id, llm, namespace).await?;
+            eprintln!("DEBUG: KG Extraction complete.");
         }
         Ok(id)
     }
@@ -158,11 +162,10 @@ impl IngestionPipeline {
         let words: Vec<&str> = text.split_whitespace().collect();
         for word in words {
             let clean = word.trim_matches(|c: char| !c.is_alphanumeric());
-            if clean.len() > 2 && clean.chars().next().map_or(false, |c| c.is_uppercase()) {
-                if let Ok(Some((_, etype, desc))) = self.db.get_entity_by_name_with_namespace(clean, namespace) {
+            if clean.len() > 2 && clean.chars().next().is_some_and(|c| c.is_uppercase())
+                && let Ok(Some((_, etype, desc))) = self.db.get_entity_by_name_with_namespace(clean, namespace) {
                     existing_context.push_str(&format!("- {} ({}): {}\n", clean, etype, desc));
                 }
-            }
         }
 
         let context_prompt = if existing_context.is_empty() { "".to_string() } else { format!("\nEXISTING KNOWLEDGE:\n{}\n", existing_context) };
@@ -201,8 +204,8 @@ impl IngestionPipeline {
                 let name = entity.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let etype = entity.get("type").and_then(|v| v.as_str()).unwrap_or("Concept");
                 let desc = entity.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                if !name.is_empty() {
-                    if let Ok(entity_id) = self.db.insert_entity_with_namespace(name, etype, desc, namespace) {
+                if !name.is_empty()
+                    && let Ok(entity_id) = self.db.insert_entity_with_namespace(name, etype, desc, namespace) {
                         // Emit Event
                         if let Some(tx) = &self.event_tx {
                             let _ = tx.send(KnowledgeEvent::EntityInserted { 
@@ -212,7 +215,6 @@ impl IngestionPipeline {
                             });
                         }
                     }
-                }
             }
         }
 
@@ -222,17 +224,19 @@ impl IngestionPipeline {
                 let t_name = rel.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let pred = rel.get("predicate").and_then(|v| v.as_str()).unwrap_or("");
                 let desc = rel.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                
                 if s_name.is_empty() || t_name.is_empty() { continue; }
+
                 // Auto-upsert entities referenced in relationships that the LLM omitted from 'entities'.
-                // Use relationship description as a fallback entity description.
                 let s_id = self.db.get_entity_by_name_with_namespace(s_name, namespace)?
                     .map(|(id, _, _)| id)
                     .or_else(|| self.db.insert_entity_with_namespace(s_name, "Concept", desc, namespace).ok());
                 let t_id = self.db.get_entity_by_name_with_namespace(t_name, namespace)?
                     .map(|(id, _, _)| id)
                     .or_else(|| self.db.insert_entity_with_namespace(t_name, "Concept", desc, namespace).ok());
-                if let (Some(s_id), Some(t_id)) = (s_id, t_id) {
-                    if self.db.insert_relationship(s_id, t_id, pred, desc).is_ok() {
+                
+                if let (Some(s_id), Some(t_id)) = (s_id, t_id)
+                    && self.db.insert_relationship(s_id, t_id, pred, desc).is_ok() {
                         if let Some(tx) = &self.event_tx {
                             let _ = tx.send(KnowledgeEvent::RelationshipInserted {
                                 source_id: s_id,
@@ -241,7 +245,6 @@ impl IngestionPipeline {
                             });
                         }
                     }
-                }
             }
         }
         Ok(())

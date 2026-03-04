@@ -6,7 +6,7 @@ use crate::engine::vectors::{encode_bq, slice_vector};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use std::path::{PathBuf};
+use std::path::{Path, PathBuf};
 use tabled::{
     settings::{object::Rows, Alignment, Modify},
     Table, Tabled,
@@ -208,6 +208,9 @@ async fn run_ingest(config: &Config, path: PathBuf, namespace: &str, semantic: b
     println!("{} {:?}", "Ingesting document:".cyan().bold(), path);
 
     let model = get_unified_model(config).await?;
+    println!("DEBUG: Preparing model...");
+    model.prepare().await?;
+    
     let db_path = config.storage_path.join("local-memory.db");
     let db = Arc::new(SqliteDatabase::open(&db_path, model.dimension())?);
 
@@ -269,7 +272,7 @@ async fn run_stats(config: &Config) -> Result<()> {
         StatsRow { metric: "Total Entities (Latest)".to_string(), value: db.count_entities()?.to_string().green().to_string() }
     ];
 
-    println!("{}", Table::new(stats).with(Modify::new(Rows::new(1..)).with(Alignment::right())).to_string());
+    println!("{}", Table::new(stats).with(Modify::new(Rows::new(1..)).with(Alignment::right())));
     Ok(())
 }
 
@@ -291,7 +294,7 @@ async fn run_list_entities(config: &Config, limit: usize, _namespace: &str) -> R
         description: d
     }).collect();
 
-    println!("{}", Table::new(rows).to_string());
+    println!("{}", Table::new(rows));
     Ok(())
 }
 
@@ -307,7 +310,7 @@ async fn run_list_relations(config: &Config, limit: usize, _namespace: &str) -> 
     }
 
     let rows: Vec<RelationRow> = relations.into_iter().map(|(s, p, t)| RelationRow { source: s, predicate: p, target: t }).collect();
-    println!("{}", Table::new(rows).to_string());
+    println!("{}", Table::new(rows));
     Ok(())
 }
 
@@ -323,7 +326,7 @@ async fn run_list_communities(config: &Config, limit: usize) -> Result<()> {
     }
 
     let rows: Vec<CommunityRow> = communities.into_iter().map(|(id, title, summary)| CommunityRow { id, title, summary }).collect();
-    println!("{}", Table::new(rows).to_string());
+    println!("{}", Table::new(rows));
     Ok(())
 }
 
@@ -355,7 +358,7 @@ async fn run_search(config: &Config, query: &str, top_k: usize, namespace: &str)
         preview: extract_preview(&r.metadata, 50),
     }).collect();
 
-    println!("{}", Table::new(rows).with(Modify::new(Rows::new(1..)).with(Alignment::left())).to_string());
+    println!("{}", Table::new(rows).with(Modify::new(Rows::new(1..)).with(Alignment::left())));
     Ok(())
 }
 
@@ -364,7 +367,7 @@ async fn run_history(_config: &Config, _title: &str, _namespace: &str) -> Result
     Ok(())
 }
 
-fn run_inspect(storage_path: &PathBuf, _id_str: &str) -> Result<()> {
+fn run_inspect(storage_path: &Path, _id_str: &str) -> Result<()> {
     println!("{}", "Inspect is not yet fully implemented for SQLite backend".yellow());
     println!("You can use 'sqlite3' command to inspect the database at:");
     println!("{}", storage_path.join("local-memory.db").display());
