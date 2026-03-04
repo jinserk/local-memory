@@ -6,12 +6,14 @@ use crate::engine::vectors::{encode_bq, slice_vector};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path::{PathBuf};
 use tabled::{
     settings::{object::Rows, Alignment, Modify},
     Table, Tabled,
 };
 use uuid::Uuid;
+use crate::engine::ingestion::IngestionPipeline;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "lmcli")]
@@ -79,6 +81,17 @@ pub enum Commands {
     Inspect {
         /// Document UUID to inspect
         id: String,
+    },
+    /// Ingest a document (PDF, MD, HTML, etc.) into the graph
+    Ingest {
+        /// Path to the document file
+        path: PathBuf,
+        /// Namespace to ingest into
+        #[arg(short, long)]
+        namespace: Option<String>,
+        /// Enable semantic chunking (requires LLM)
+        #[arg(short = 'S', long)]
+        semantic: bool,
     },
     /// Run diagnostic tests (insert, search)
     Test,
@@ -174,12 +187,45 @@ pub fn run(cli: Cli) -> Result<()> {
             })
         },
         Commands::Inspect { id } => run_inspect(&config.storage_path, &id),
+        Commands::Ingest { path, namespace, semantic } => {
+            tokio::runtime::Runtime::new()?.block_on(async {
+                run_ingest(&config, path, namespace.as_deref().unwrap_or("default"), semantic).await
+            })
+        },
         Commands::Test => {
             tokio::runtime::Runtime::new()?.block_on(async {
                 run_test(&config).await
             })
         },
     }
+}
+
+async fn run_ingest(config: &Config, path: PathBuf, namespace: &str, semantic: bool) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!("File not found: {:?}", path);
+    }
+
+    println!("{} {:?}", "Ingesting document:".cyan().bold(), path);
+
+    let model = get_unified_model(config).await?;
+    let db_path = config.storage_path.join("local-memory.db");
+    let db = Arc::new(SqliteDatabase::open(&db_path, model.dimension())?);
+
+    let pipeline = IngestionPipeline::new(
+        model.clone(),
+        db.clone(),
+        Some(model.clone()), // Use unified model as LLM provider for extraction
+        semantic,
+        None
+    );
+
+    let id = pipeline.run_file(&path, serde_json::json!({}), namespace).await?;
+    
+    println!("  {} Successfully ingested document", "✓".green());
+    println!("  {} ID: {}", "•".blue(), id);
+    println!("  {} Namespace: {}", "•".blue(), namespace);
+    
+    Ok(())
 }
 
 async fn run_init(config: &Config) -> Result<()> {

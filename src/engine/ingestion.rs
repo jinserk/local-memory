@@ -2,6 +2,7 @@ use crate::storage::sqlite::SqliteDatabase;
 use crate::engine::vectors::{encode_bq, slice_vector};
 use crate::KnowledgeEvent;
 use anyhow::Result;
+use kreuzberg;
 use std::sync::Arc;
 use uuid::Uuid;
 use edgequake_llm::{LLMProvider, EmbeddingProvider};
@@ -34,23 +35,35 @@ impl IngestionPipeline {
 
     pub async fn run_auto(&self, input: &str, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
         let path = Path::new(input);
-        if path.exists() && is_image_file(path) {
-            return self.run_image(path, metadata, namespace).await;
+        if path.exists() {
+            return self.run_file(path, metadata, namespace).await;
         }
         self.run_with_namespace(input, metadata, namespace).await
     }
 
-    pub async fn run_image(&self, path: &Path, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
-        eprintln!("[ocr] Processing image: {:?}", path);
-        let extracted_text = format!("Image file: {:?}. [OCR Placeholder: Simulated text from architecture diagram]", path);
-        let mut img_metadata = metadata.clone();
-        if let Some(obj) = img_metadata.as_object_mut() {
-            obj.insert("source_image".to_string(), json!(path.to_string_lossy()));
-            if !obj.contains_key("title") {
-                obj.insert("title".to_string(), json!(format!("Image: {}", path.file_name().unwrap_or_default().to_string_lossy())));
+    pub async fn run_file(&self, path: &Path, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
+        eprintln!("DEBUG: Extracting content from {:?}", path);
+        
+        let config = kreuzberg::ExtractionConfig::default();
+        let result = kreuzberg::extract_file(path, None, &config).await
+            .map_err(|e| anyhow::anyhow!("Extraction failed for {:?}: {}", path, e))?;
+
+        let mut file_metadata = metadata.clone();
+        if let Some(obj) = file_metadata.as_object_mut() {
+            obj.insert("source_file".to_string(), json!(path.to_string_lossy()));
+            if let Some(title) = &result.metadata.title {
+                obj.insert("title".to_string(), json!(title));
+            } else if !obj.contains_key("title") {
+                obj.insert("title".to_string(), json!(path.file_name().unwrap_or_default().to_string_lossy()));
             }
+            obj.insert("mime_type".to_string(), json!(result.mime_type));
         }
-        self.run_with_namespace(&extracted_text, img_metadata, namespace).await
+
+        self.run_with_namespace(&result.content, file_metadata, namespace).await
+    }
+
+    pub async fn run_image(&self, path: &Path, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
+        self.run_file(path, metadata, namespace).await
     }
 
     pub async fn run_with_namespace(&self, text: &str, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
@@ -231,9 +244,4 @@ impl IngestionPipeline {
         }
         Ok(())
     }
-}
-
-fn is_image_file(path: &Path) -> bool {
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-    ["png", "jpg", "jpeg", "webp", "bmp"].contains(&ext.as_str())
 }
