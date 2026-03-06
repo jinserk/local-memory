@@ -131,3 +131,110 @@ fn reconstruct_conversation_step(db_path: &PathBuf, assistant_msg_id: &str) -> R
         Ok(Some(format!("User: {}\nAssistant: {}", user_text, assistant_text)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use uuid::Uuid;
+
+    fn setup_mock_db(db_path: &PathBuf) -> Result<()> {
+        let conn = Connection::open(db_path)?;
+        conn.execute(
+            "CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                data TEXT,
+                time_created INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE part (
+                id TEXT PRIMARY KEY,
+                message_id TEXT,
+                data TEXT,
+                time_created INTEGER
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn insert_message(conn: &Connection, id: &str, session_id: &str, role: &str, time: i64) -> Result<()> {
+        conn.execute(
+            "INSERT INTO message (id, session_id, data, time_created) VALUES (?, ?, ?, ?)",
+            params![id, session_id, json!({"role": role}).to_string(), time],
+        )?;
+        Ok(())
+    }
+
+    fn insert_text_part(conn: &Connection, msg_id: &str, text: &str, time: i64) -> Result<()> {
+        conn.execute(
+            "INSERT INTO part (id, message_id, data, time_created) VALUES (?, ?, ?, ?)",
+            params![Uuid::new_v4().to_string(), msg_id, json!({"type": "text", "text": text}).to_string(), time],
+        )?;
+        Ok(())
+    }
+
+    fn insert_tool_part(conn: &Connection, msg_id: &str, tool: &str, output: &str, time: i64) -> Result<()> {
+        conn.execute(
+            "INSERT INTO part (id, message_id, data, time_created) VALUES (?, ?, ?, ?)",
+            params![
+                Uuid::new_v4().to_string(),
+                msg_id,
+                json!({
+                    "type": "tool",
+                    "tool": tool,
+                    "state": {"output": output}
+                }).to_string(),
+                time
+            ],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_reconstruct_qa_step() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test_opencode.db");
+        setup_mock_db(&db_path)?;
+        let conn = Connection::open(&db_path)?;
+
+        let session_id = "sess_1";
+        
+        // 1. User message
+        insert_message(&conn, "u1", session_id, "user", 1000)?;
+        insert_text_part(&conn, "u1", "What is Rust?", 1001)?;
+
+        // 2. Assistant message with text and tool
+        insert_message(&conn, "a1", session_id, "assistant", 2000)?;
+        insert_text_part(&conn, "a1", "Rust is a language.", 2001)?;
+        insert_tool_part(&conn, "a1", "google_search", "Rust details...", 2002)?;
+
+        let step = reconstruct_conversation_step(&db_path, "a1")?.unwrap();
+        assert!(step.contains("User: What is Rust?"));
+        assert!(step.contains("Assistant: Rust is a language."));
+        assert!(step.contains("[Tool: google_search] -> Rust details..."));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_new_messages() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test_new_msgs.db");
+        setup_mock_db(&db_path)?;
+        let conn = Connection::open(&db_path)?;
+
+        insert_message(&conn, "m1", "s1", "user", 100)?;
+        insert_message(&conn, "m2", "s1", "assistant", 200)?;
+
+        let msgs = get_new_messages(&db_path, 150)?;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].0, "m2");
+        assert_eq!(msgs[0].1, "assistant");
+
+        Ok(())
+    }
+}
