@@ -59,3 +59,5 @@ patterns:
   - { contains: "bert",  arch: bert }
   - { contains: "phi",   arch: phi3,  prompt_template: extraction }
   - { contains: "qwen",  arch: qwen2, prompt_template: extraction }
+  - { contains: "nuextract-2.0", arch: qwen2, prompt_template: extraction }
+  - { contains: "nuextract-1.5", arch: phi3,  prompt_template: extraction }
