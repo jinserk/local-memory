@@ -94,10 +94,10 @@
 - The "Oracle Pattern" using brute-force Cosine similarity (via simsimd) is an effective way to verify the search funnel's accuracy.
 
 ## MCP Tool Wrappers
-- Implemented `memory_insert` and `memory_search` tools in `src/mcp/tools.rs`.
+- Implemented `memorize` and `recall` tools in `src/mcp/tools.rs`.
 - Tools follow MCP v1.0 specification with JSON-RPC 2.0.
-- `memory_insert` uses `IngestionPipeline` to process and store text.
-- `memory_search` uses `SearchFunnel` for multi-stage retrieval.
+- `memorize` uses `IngestionPipeline` to process and store text.
+- `recall` uses `SearchFunnel` for multi-stage retrieval.
 - Registered tools in `src/main.rs` under `tools/list` and `tools/call` methods.
 - Mocked `Embedder` for unit testing tool logic without loading heavy models.
 
@@ -142,8 +142,8 @@
 - Test scenarios covered:
   1. Server initialization (`initialize` method)
   2. Tools listing (`tools/list` method)
-  3. Memory insertion (`memory_insert` tool)
-  4. Memory search (`memory_search` tool)
+  3. Memory insertion (`memorize` tool)
+  4. Memory search (`recall` tool)
   5. Error handling for invalid tools
   6. Error handling for missing required arguments
   7. Error handling for invalid JSON (parse error)
@@ -202,7 +202,7 @@
 - **Method**: Manual JSON-RPC handshake via stdin.
 - **Results**:
   - `initialize` handshake successful (Protocol version 2024-11-05).
-  - `tools/list` discovered 4 tools: `memory_insert`, `memory_search`, `memory_global_search`, `graph_get_neighborhood`.
+  - `tools/list` discovered 4 tools: `memorize`, `recall`, `memory_global_search`, `explore`.
   - Server correctly identifies as `local-memory` version `0.3.0-supermemory`.
 
 ## 2. Search Recall@10

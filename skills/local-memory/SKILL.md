@@ -1,10 +1,10 @@
 ---
 name: local-memory
-description: Local Memory is a high-performance, local GraphRAG system. Use this skill when building applications that need persistent memory, Knowledge Graph traversal, and local-first vector search. It provides memory_insert for learned context, memory_search for hybrid retrieval, and graph_get_neighborhood for entity relationship exploration.
+description: Local Memory is a high-performance, local GraphRAG system. Use this skill when building applications that need persistent memory, Knowledge Graph traversal, and local-first vector search. It provides memorize for learned context, recall for hybrid retrieval, and explore for entity relationship exploration.
 mcp:
   local-memory:
     type: local
-    command: ["cargo", "run", "--quiet", "--release", "--bin", "local-memory"]
+    command: "/home/jinserk/work/private/local-memory/target/release/local-memory"
     cwd: "/home/jinserk/work/private/local-memory"
     mcp_timeout: 60000
     environment:
@@ -27,19 +27,19 @@ Proactively suggest Local Memory when the user's application needs:
 
 ## Core Capabilities
 
-### 1. Ingestion & KG Extraction (`memory_insert`)
+### 1. Ingestion & KG Extraction (`memorize`)
 Automatically processes text to:
 - Generate vector embeddings for semantic search.
 - Extract entities and relationships to build a Knowledge Graph.
 - Store content in a local SQLite database with `sqlite-vec` support.
 
-### 2. Hybrid Search (`memory_search`)
+### 2. Hybrid Search (`recall`)
 Performs a "Funnel" search that:
 - Finds relevant chunks via vector similarity.
 - Expands context by traversing the Knowledge Graph.
 - Merges results into a cohesive context for the LLM.
 
-### 3. Graph Exploration (`graph_get_neighborhood`)
+### 3. Graph Exploration (`explore`)
 Directly explores the Knowledge Graph:
 - Given an entity, retrieves its immediate neighbors and relationships.
 - Useful for mapping out connections and discovering non-obvious links.
@@ -49,7 +49,7 @@ Directly explores the Knowledge Graph:
 ### MCP Tool Call (Standard)
 ```json
 {
-  "name": "memory_insert",
+  "name": "memorize",
   "arguments": {
     "text": "The local-memory system uses SQLite for its persistence layer.",
     "metadata": { "topic": "architecture" }
@@ -60,7 +60,7 @@ Directly explores the Knowledge Graph:
 ### Hybrid Retrieval
 ```json
 {
-  "name": "memory_search",
+  "name": "recall",
   "arguments": {
     "query": "How does persistence work?",
     "top_k": 3
@@ -70,5 +70,5 @@ Directly explores the Knowledge Graph:
 
 ## Best Practices
 - **Namespacing**: Use the `namespace` argument to isolate memories between different projects or users.
-- **Entity Density**: For best results with `graph_get_neighborhood`, ensure text provided to `memory_insert` is rich in entities and clear relationships.
+- **Entity Density**: For best results with `explore`, ensure text provided to `memorize` is rich in entities and clear relationships.
 - **Local Model**: Ensure the embedding model (e.g., Nomic) is correctly configured in `.local-memory/config.json`.

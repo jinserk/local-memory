@@ -34,7 +34,7 @@ impl McpContext {
 pub fn list_tools() -> Value {
     json!([
         {
-            "name": "memory_insert",
+            "name": "memorize",
             "description": "Insert a new memory into the local database and extract knowledge graph",
             "inputSchema": {
                 "type": "object",
@@ -47,7 +47,7 @@ pub fn list_tools() -> Value {
             }
         },
         {
-            "name": "memory_search",
+            "name": "recall",
             "description": "Search for relevant memories using hybrid vector and graph search",
             "inputSchema": {
                 "type": "object",
@@ -72,7 +72,7 @@ pub fn list_tools() -> Value {
             }
         },
         {
-            "name": "graph_get_neighborhood",
+            "name": "explore",
             "description": "Explore an entity's neighborhood in the knowledge graph",
             "inputSchema": {
                 "type": "object",
@@ -99,7 +99,7 @@ pub fn list_resources() -> Value {
 
 pub async fn call_tool(name: &str, arguments: Value, context: &McpContext) -> Result<Value> {
     match name {
-        "memory_insert" => {
+        "memorize" => {
             let text = arguments.get("text").and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'text' argument"))?;
             let metadata = arguments.get("metadata").cloned().unwrap_or(json!({}));
@@ -110,7 +110,7 @@ pub async fn call_tool(name: &str, arguments: Value, context: &McpContext) -> Re
                 "content": [{"type": "text", "text": format!("Memory inserted and knowledge graph updated. ID: {}", id)}]
             }))
         }
-        "memory_search" => {
+        "recall" => {
             let query = arguments.get("query").and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'query' argument"))?;
             let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
@@ -138,7 +138,7 @@ pub async fn call_tool(name: &str, arguments: Value, context: &McpContext) -> Re
                 "content": [{"type": "text", "text": serde_json::to_string_pretty(&results)?}]
             }))
         }
-        "graph_get_neighborhood" => {
+        "explore" => {
             let entity_name = arguments.get("entity_name").and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'entity_name' argument"))?;
             let namespace = arguments.get("namespace").and_then(|v| v.as_str()).unwrap_or("default");

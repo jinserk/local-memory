@@ -5,3 +5,5 @@ pub mod git;
 pub mod shell;
 pub mod graph;
 pub mod communities;
+pub mod conversation;
+

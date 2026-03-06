@@ -4,6 +4,7 @@ use local_memory::model::{check_llm_connectivity, get_unified_model};
 use local_memory::storage::SqliteDatabase;
 use local_memory::engine::git::spawn_git_observer;
 use local_memory::engine::shell::spawn_shell_observer;
+use local_memory::engine::conversation::spawn_conversation_observer;
 use local_memory::engine::graph::spawn_graph_observer;
 use local_memory::engine::communities::spawn_community_service;
 use local_memory::KnowledgeEvent;
@@ -71,9 +72,10 @@ async fn main() -> Result<()> {
 
     // 4. Spawn Observers (Opt-in)
     if context.config.enable_observers {
-        eprintln!("  ✓ Starting background observers (Git, Shell, Graph, Community)");
+        eprintln!("  ✓ Starting background observers (Git, Shell, Conversation, Graph, Community)");
         spawn_git_observer(context.clone()).await;
         spawn_shell_observer(context.clone()).await;
+        spawn_conversation_observer(context.clone()).await;
         spawn_graph_observer(context.clone(), event_tx.subscribe()).await;
         spawn_community_service(context.clone(), event_tx.subscribe()).await;
     }

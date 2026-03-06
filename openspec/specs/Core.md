@@ -28,9 +28,9 @@ Local Memory is a high-performance local GraphRAG (Graph Retrieval-Augmented Gen
 The system implements the Model Context Protocol (MCP) using JSON-RPC 2.0 over stdio.
 
 ### Tools
-- `memory_insert`: Ingests text and updates the Knowledge Graph.
-- `memory_search`: Performs hybrid retrieval for a given query.
-- `graph_get_neighborhood`: Explores connections for a specific entity.
+- `memorize`: Ingests text and updates the Knowledge Graph.
+- `recall`: Performs hybrid retrieval for a given query.
+- `explore`: Explores connections for a specific entity.
 
 ## 4. CLI Interface (lmcli)
 A diagnostic and exploration tool for the local database.

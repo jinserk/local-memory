@@ -12,7 +12,6 @@ pub enum MemoryTier {
     Semantic,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TierConfig {
     pub default_tier: MemoryTier,
@@ -38,7 +37,6 @@ pub enum ModelProvider {
     Ollama,
     OpenAI,
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ModelConfig {
@@ -125,6 +123,10 @@ pub struct Config {
     #[serde(default)]
     pub enable_observers: bool,
 
+    /// Optional path to OpenCode database (defaults to ~/.local/share/opencode/opencode.db)
+    #[serde(default)]
+    pub opencode_db_path: Option<PathBuf>,
+
     /// Automatically terminate after N seconds of inactivity (0 to disable)
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout_seconds: u64,
@@ -161,6 +163,7 @@ impl Default for Config {
             }),
             semantic_chunking: false,
             enable_observers: false,
+            opencode_db_path: None,
             idle_timeout_seconds: default_idle_timeout(),
             stage1_candidates: default_stage1_candidates(),
             stage2_candidates: default_stage2_candidates(),

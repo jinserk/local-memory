@@ -59,7 +59,7 @@ pub enum Commands {
         limit: usize,
     },
     /// Search memories using the hybrid funnel
-    Search {
+    Recall {
         /// Search query (text to search for)
         query: String,
         /// Number of results to return
@@ -82,16 +82,28 @@ pub enum Commands {
         /// Document UUID to inspect
         id: String,
     },
-    /// Ingest a document (PDF, MD, HTML, etc.) into the graph
-    Ingest {
-        /// Path to the document file
-        path: PathBuf,
+    /// Ingest text or a document into the graph
+    Memorize {
+        /// Path to a file to ingest (optional, can provide raw text instead)
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        /// Raw text to remember (alternative to path)
+        #[arg(short, long)]
+        text: Option<String>,
         /// Namespace to ingest into
         #[arg(short, long)]
         namespace: Option<String>,
         /// Enable semantic chunking (requires LLM)
         #[arg(short = 'S', long)]
         semantic: bool,
+    },
+    /// Explore an entity's neighborhood in the knowledge graph
+    Explore {
+        /// Name of the entity to explore
+        entity_name: String,
+        /// Namespace to explore in
+        #[arg(short, long)]
+        namespace: Option<String>,
     },
     /// Run diagnostic tests (insert, search)
     Test,
@@ -176,9 +188,9 @@ pub fn run(cli: Cli) -> Result<()> {
                 run_list_communities(&config, limit).await
             })
         },
-        Commands::Search { query, top_k, namespace } => {
+        Commands::Recall { query, top_k, namespace } => {
             tokio::runtime::Runtime::new()?.block_on(async {
-                run_search(&config, &query, top_k, namespace.as_deref().unwrap_or("default")).await
+                run_recall(&config, &query, top_k, namespace.as_deref().unwrap_or("default")).await
             })
         },
         Commands::History { title, namespace } => {
@@ -187,9 +199,14 @@ pub fn run(cli: Cli) -> Result<()> {
             })
         },
         Commands::Inspect { id } => run_inspect(&config.storage_path, &id),
-        Commands::Ingest { path, namespace, semantic } => {
+        Commands::Memorize { path, text, namespace, semantic } => {
             tokio::runtime::Runtime::new()?.block_on(async {
-                run_ingest(&config, path, namespace.as_deref().unwrap_or("default"), semantic).await
+                run_memorize(&config, path, text, namespace.as_deref().unwrap_or("default"), semantic).await
+            })
+        },
+        Commands::Explore { entity_name, namespace } => {
+            tokio::runtime::Runtime::new()?.block_on(async {
+                run_explore(&config, &entity_name, namespace.as_deref().unwrap_or("default")).await
             })
         },
         Commands::Test => {
@@ -200,15 +217,12 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 }
 
-async fn run_ingest(config: &Config, path: PathBuf, namespace: &str, semantic: bool) -> Result<()> {
-    if !path.exists() {
-        anyhow::bail!("File not found: {:?}", path);
+async fn run_memorize(config: &Config, path: Option<PathBuf>, text: Option<String>, namespace: &str, semantic: bool) -> Result<()> {
+    if path.is_none() && text.is_none() {
+        anyhow::bail!("Either --path or --text must be provided");
     }
 
-    println!("{} {:?}", "Ingesting document:".cyan().bold(), path);
-
     let model = get_unified_model(config).await?;
-    println!("DEBUG: Preparing model...");
     model.prepare().await?;
     
     let db_path = config.storage_path.join("local-memory.db");
@@ -217,17 +231,74 @@ async fn run_ingest(config: &Config, path: PathBuf, namespace: &str, semantic: b
     let pipeline = IngestionPipeline::new(
         model.clone(),
         db.clone(),
-        Some(model.clone()), // Use unified model as LLM provider for extraction
+        Some(model.clone()),
         semantic,
         None
     );
 
-    let id = pipeline.run_file(&path, serde_json::json!({}), namespace).await?;
+    let id = if let Some(path) = path {
+        println!("{} {:?}", "Ingesting document:".cyan().bold(), path);
+        pipeline.run_file(&path, serde_json::json!({}), namespace).await?
+    } else {
+        let raw_text = text.unwrap();
+        println!("{} {} chars", "Ingesting text:".cyan().bold(), raw_text.len());
+        pipeline.run_auto(&raw_text, serde_json::json!({}), namespace).await?
+    };
     
-    println!("  {} Successfully ingested document", "✓".green());
+    println!("  {} Successfully memorized content", "✓".green());
     println!("  {} ID: {}", "•".blue(), id);
     println!("  {} Namespace: {}", "•".blue(), namespace);
     
+    Ok(())
+}
+
+async fn run_explore(config: &Config, entity_name: &str, namespace: &str) -> Result<()> {
+    let db_path = config.storage_path.join("local-memory.db");
+    let model = get_unified_model(config).await?;
+    let db = SqliteDatabase::open(&db_path, model.dimension())?;
+    
+    println!("{} \"{}\" in namespace: {}", "Exploring entity:".cyan().bold(), entity_name, namespace.yellow());
+    println!();
+
+    let neighborhood = db.get_neighborhood_with_namespace(entity_name, namespace)?;
+    if neighborhood.is_null() || (neighborhood.is_array() && neighborhood.as_array().unwrap().is_empty()) {
+        println!("{}", "No relationships found for this entity.".yellow());
+        return Ok(());
+    }
+
+    println!("{}", serde_json::to_string_pretty(&neighborhood)?);
+    Ok(())
+}
+
+async fn run_recall(config: &Config, query: &str, top_k: usize, namespace: &str) -> Result<()> {
+    let db_path = config.storage_path.join("local-memory.db");
+    if !db_path.exists() {
+        println!("{}", "Database file not found. Run 'lmcli init' first.".yellow());
+        return Ok(());
+    }
+    
+    let model = get_unified_model(config).await?;
+    let db = SqliteDatabase::open(&db_path, model.dimension())?;
+    let funnel = SearchFunnel::new_sqlite(&db, config);
+
+    println!("{} \"{}\" in namespace: {}", "Recalling for:".cyan().bold(), query, namespace.yellow());
+    println!();
+
+    let query_vector = model.embed_one(query).await.map_err(|e| anyhow::anyhow!("Embedding failed: {}", e))?;
+    let results = funnel.hybrid_search_with_namespace(&query_vector, top_k, namespace)?;
+
+    if results.is_empty() {
+        println!("{}", "No memories found.".yellow());
+        return Ok(());
+    }
+
+    let rows: Vec<MemoryRow> = results.iter().map(|r| MemoryRow {
+        id: r.id.to_string(),
+        distance: format!("{:.4}", r.score),
+        preview: extract_preview(&r.metadata, 50),
+    }).collect();
+
+    println!("{}", Table::new(rows).with(Modify::new(Rows::new(1..)).with(Alignment::left())));
     Ok(())
 }
 
@@ -327,38 +398,6 @@ async fn run_list_communities(config: &Config, limit: usize) -> Result<()> {
 
     let rows: Vec<CommunityRow> = communities.into_iter().map(|(id, title, summary)| CommunityRow { id, title, summary }).collect();
     println!("{}", Table::new(rows));
-    Ok(())
-}
-
-async fn run_search(config: &Config, query: &str, top_k: usize, namespace: &str) -> Result<()> {
-    let db_path = config.storage_path.join("local-memory.db");
-    if !db_path.exists() {
-        println!("{}", "Database file not found. Run 'lmcli init' first.".yellow());
-        return Ok(());
-    }
-    
-    let model = get_unified_model(config).await?;
-    let db = SqliteDatabase::open(&db_path, model.dimension())?;
-    let funnel = SearchFunnel::new_sqlite(&db, config);
-
-    println!("{} \"{}\" in namespace: {}", "Searching for:".cyan().bold(), query, namespace.yellow());
-    println!();
-
-    let query_vector = model.embed_one(query).await.map_err(|e| anyhow::anyhow!("Embedding failed: {}", e))?;
-    let results = funnel.hybrid_search_with_namespace(&query_vector, top_k, namespace)?;
-
-    if results.is_empty() {
-        println!("{}", "No results found.".yellow());
-        return Ok(());
-    }
-
-    let rows: Vec<MemoryRow> = results.iter().map(|r| MemoryRow {
-        id: r.id.to_string(),
-        distance: format!("{:.4}", r.score),
-        preview: extract_preview(&r.metadata, 50),
-    }).collect();
-
-    println!("{}", Table::new(rows).with(Modify::new(Rows::new(1..)).with(Alignment::left())));
     Ok(())
 }
 

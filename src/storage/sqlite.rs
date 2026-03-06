@@ -154,7 +154,9 @@ impl SqliteDatabase {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_document_with_namespace(
+
         &self, 
         id: Uuid, 
         title: &str, 
@@ -436,7 +438,9 @@ impl SqliteDatabase {
         Ok(results)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn list_entities_full(&self, limit: usize) -> Result<Vec<(String, String, Option<String>, String)>> {
+
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
         let mut stmt = conn.prepare("SELECT name, type, community_id, description FROM entities WHERE is_latest = 1 LIMIT ?")?;
         let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;

@@ -142,7 +142,7 @@ fn test_tools_list() -> Result<()> {
 
     let response = server.send_request(request)?;
     let tools = response["result"]["tools"].as_array().expect("tools field missing or not an array");
-    assert!(tools.iter().any(|t| t["name"] == "memory_insert"));
-    assert!(tools.iter().any(|t| t["name"] == "memory_search"));
+    assert!(tools.iter().any(|t| t["name"] == "memorize"));
+    assert!(tools.iter().any(|t| t["name"] == "recall"));
     Ok(())
 }

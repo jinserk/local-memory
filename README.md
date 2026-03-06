@@ -69,11 +69,11 @@ The `lmcli` binary provides tools to inspect your memory:
 
 Local Memory exposes several tools to AI agents:
 
-#### `memory_insert`
+#### `memorize`
 Ingests text, generates embeddings, and extracts knowledge graph entities/relationships.
 ```json
 {
-  "name": "memory_insert",
+  "name": "memorize",
   "arguments": {
     "text": "Alice is a software engineer at Acme Corp.",
     "metadata": { "title": "Employee Directory" }
@@ -81,11 +81,11 @@ Ingests text, generates embeddings, and extracts knowledge graph entities/relati
 }
 ```
 
-#### `memory_search`
+#### `recall`
 Performs a hybrid search across vectors and the knowledge graph.
 ```json
 {
-  "name": "memory_search",
+  "name": "recall",
   "arguments": {
     "query": "Who works at Acme Corp?",
     "top_k": 5
@@ -93,11 +93,11 @@ Performs a hybrid search across vectors and the knowledge graph.
 }
 ```
 
-#### `graph_get_neighborhood`
+#### `explore`
 Explores the immediate connections of a specific entity in the graph.
 ```json
 {
-  "name": "graph_get_neighborhood",
+  "name": "explore",
   "arguments": { "entity_name": "Acme Corp" }
 }
 ```

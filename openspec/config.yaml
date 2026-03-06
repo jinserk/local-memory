@@ -71,9 +71,9 @@ context: |
       - Gemini CLI: Skills and commands integration
 
     MCP Tools:
-      - memory_insert: Ingest text and extract Knowledge Graph data.
-      - memory_search: Hybrid vector and graph search.
-      - graph_get_neighborhood: Explore entity connections.
+      - memorize: Ingest text and extract Knowledge Graph data.
+      - recall: Hybrid vector and graph search.
+      - explore: Explore entity connections.
 
     CLI Tool (lmcli):
       - lmcli stats: Show database statistics and entity counts.
@@ -94,7 +94,9 @@ context: |
 rules:
   # General rules for all artifacts
   general:
-    - "CRITICAL: All OpenSpec commands MUST be run from project root"
+    /// Enable background observers (Git, Shell, Conversation)
+    - \"CRITICAL: All OpenSpec commands MUST be run from project root\"
+
     - All OpenSpec artifacts MUST be located in openspec/ at project root
     - The openspec/ directory is the single canonical location for all specification artifacts
     - Keep specifications in sync with implementation changes

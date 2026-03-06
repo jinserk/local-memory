@@ -113,14 +113,14 @@ async fn test_mcp_context_flow() -> Result<()> {
 
     // 3. Tool call (Neighborhood)
     let args = json!({"entity_name": "Alice"});
-    let tool_result = call_tool("graph_get_neighborhood", args, &context).await?;
+    let tool_result = call_tool("explore", args, &context).await?;
     
     let content = tool_result["content"][0]["text"].as_str().unwrap();
     assert!(content.contains("Acme Corp"));
 
     // 4. Search
     let search_args = json!({"query": "Who is Alice?"});
-    let search_result = call_tool("memory_search", search_args, &context).await?;
+    let search_result = call_tool("recall", search_args, &context).await?;
     let search_content = search_result["content"][0]["text"].as_str().unwrap();
     assert!(search_content.contains("Alice"));
 

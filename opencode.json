@@ -3,10 +3,10 @@
   "mcp": {
     "local-memory": {
       "type": "local",
-      "command": ["cargo", "run", "--quiet", "--release", "--bin", "local-memory"],
+      "command": ["${env:PROJECT_PATH}/target/release/local-memory"],
       "enabled": true,
       "environment": {
-        "LOCAL_MEMORY_CONFIG": "/home/jinserk/work/private/local-memory/.local-memory/config.json"
+        "LOCAL_MEMORY_CONFIG": "${env:PROJECT_PATH}/.local-memory/config.json"
       }
     }
   }

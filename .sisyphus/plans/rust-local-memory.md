@@ -55,7 +55,7 @@ Implement a robust, persistent local memory system that AI agents can use via MC
 - [x] Ingestion speed < 20ms per document (excluding embedding time).
 
 ### Must Have
-- MCP `tools` for `memory_insert` and `memory_search`.
+- MCP `tools` for `memorize` and `recall`.
 - Configurable funnel stages via JSON.
 - SIMD acceleration for Hamming distance.
 - Persistent index that survives restarts.

@@ -34,4 +34,4 @@
 
 - [x] 6.1 Extend `CandleProvider` to support VLM architecture (e.g., Qwen2-VL or similar)
 - [x] 6.2 Add OCR preprocessing step to the ingestion pipeline
-- [x] 6.3 Add image support to `memory_insert` tool
+- [x] 6.3 Add image support to `memorize` tool
