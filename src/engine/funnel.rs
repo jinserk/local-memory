@@ -35,7 +35,7 @@ impl<'a> SearchFunnel<'a> {
             return Ok(vec![]);
         }
 
-        let query_short = slice_vector(query_full, 256);
+        let query_short = slice_vector(query_full, self.db.dimension() / 3);
         let s2_results = self.db.search_stage2_short(&s1_candidates, &query_short, 20)?;
 
         let mut results = Vec::new();

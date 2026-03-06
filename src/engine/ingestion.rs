@@ -78,7 +78,7 @@ impl IngestionPipeline {
         let id = Uuid::new_v4();
         let v_full = self.embedder.embed_one(text).await
             .map_err(|e| anyhow::anyhow!("Embedding failed: {}", e))?;
-        let v_short = slice_vector(&v_full, 256);
+        let v_short = slice_vector(&v_full, self.db.dimension() / 3);
         let v_bit = encode_bq(&v_full);
 
         let mut full_metadata = metadata.clone();

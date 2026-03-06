@@ -30,6 +30,10 @@ impl SqliteDatabase {
         Ok(db)
     }
 
+    pub fn dimension(&self) -> usize {
+        self.dimension
+    }
+
     fn initialize(&self) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
         // Core tables with temporal and namespacing support

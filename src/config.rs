@@ -37,6 +37,7 @@ pub enum ModelProvider {
     HuggingFace,
     Local,
     Ollama,
+    OpenAI,
 }
 
 impl Default for ModelProvider {
@@ -58,8 +59,10 @@ pub struct ModelConfig {
     /// Dimension of vectors produced by this model
     #[serde(default = "default_dimension")]
     pub dimension: usize,
-    /// Optional base URL for the API (used for Ollama)
+    /// Optional base URL for the API (used for Ollama / OpenAI-compatible)
     pub base_url: Option<String>,
+    /// Optional API key (used for OpenAI-compatible providers)
+    pub api_key: Option<String>,
 }
 
 fn default_auto_download() -> bool { true }
@@ -73,6 +76,7 @@ impl Default for ModelConfig {
             auto_download: true,
             dimension: 768,
             base_url: None,
+            api_key: None,
         }
     }
 }

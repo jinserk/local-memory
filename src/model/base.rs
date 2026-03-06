@@ -16,6 +16,8 @@ pub struct GenericUnifiedModel {
     pub embedder: Arc<dyn EmbeddingProvider>,
     /// List of (model_name, base_url) to pull via Ollama during prepare()
     pub prepare_list: Vec<(String, String)>,
+    /// Override dimension (used when the provider's intrinsic dimension() is wrong, e.g. OpenAI-compatible with custom models)
+    pub override_dimension: Option<usize>,
 }
 
 #[async_trait]
@@ -38,7 +40,7 @@ impl LLMProvider for GenericUnifiedModel {
 impl EmbeddingProvider for GenericUnifiedModel {
     fn name(&self) -> &str { self.embedder.name() }
     fn model(&self) -> &str { self.embedder.model() }
-    fn dimension(&self) -> usize { self.embedder.dimension() }
+    fn dimension(&self) -> usize { self.override_dimension.unwrap_or_else(|| self.embedder.dimension()) }
     fn max_tokens(&self) -> usize { self.embedder.max_tokens() }
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, LlmError> {
         self.embedder.embed(texts).await

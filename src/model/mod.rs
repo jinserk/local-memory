@@ -48,6 +48,23 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
         ModelProvider::Local => {
             anyhow::bail!("Local provider not yet implemented for standalone embedding");
         }
+        ModelProvider::OpenAI => {
+            let api_key = config
+                .embedding
+                .api_key
+                .clone()
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                .ok_or_else(|| anyhow::anyhow!("Missing API key for OpenAI embedding"))?;
+            let base_url = config
+                .embedding
+                .base_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            Arc::new(
+                OpenAIProvider::compatible(api_key, base_url)
+                    .with_embedding_model(&config.embedding.name),
+            )
+        }
     };
 
     // 2. Resolve LLM Extractor
@@ -74,7 +91,13 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
                     .clone()
                     .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("Missing OpenAI API key"))?;
-                Arc::new(OpenAIProvider::new(api_key).with_model(&ext_config.name))
+                let provider = OpenAIProvider::new(api_key.clone()).with_model(&ext_config.name);
+                let provider = if let Some(base_url) = &ext_config.base_url {
+                    OpenAIProvider::compatible(api_key, base_url.clone()).with_model(&ext_config.name)
+                } else {
+                    provider
+                };
+                Arc::new(provider)
             }
             ExtractorProvider::HuggingFace => {
                 let p = CandleProvider::load(
@@ -107,6 +130,11 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
         llm,
         embedder,
         prepare_list,
+        override_dimension: if config.embedding.provider == ModelProvider::OpenAI {
+            Some(config.embedding.dimension)
+        } else {
+            None
+        },
     }))
 }
 
