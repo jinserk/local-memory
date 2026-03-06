@@ -13,4 +13,5 @@ pub enum KnowledgeEvent {
     DocumentInserted { id: Uuid, title: String, namespace: String },
     EntityInserted { id: Uuid, name: String, namespace: String },
     RelationshipInserted { source_id: Uuid, target_id: Uuid, predicate: String },
+    CommunitiesUpdated { comm_ids: Vec<String> },
 }

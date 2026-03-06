@@ -23,7 +23,6 @@ impl GraphObserver {
     }
 
     pub async fn run(mut self, mut rx: broadcast::Receiver<KnowledgeEvent>) {
-        eprintln!("DEBUG: GraphObserver starting...");
         
         // 1. Bootstrap from DB
         if let Ok(rels) = self.context.db.list_all_relationships() {
@@ -56,10 +55,7 @@ impl GraphObserver {
 
     async fn recluster_and_update_db(&mut self) {
         // Incremental Label Propagation (Simplified)
-        // For each node, assign community of the majority of its neighbors
         let mut communities: HashMap<NodeIndex, String> = HashMap::new();
-        
-        // Initialize: each node is its own community if not set
         for node in self.graph.node_indices() {
             communities.insert(node, format!("comm_{}", node.index()));
         }
@@ -81,12 +77,22 @@ impl GraphObserver {
             communities = next_communities;
         }
 
-        // Update DB
-        for (node, comm_id) in communities {
-            let entity_id = self.graph[node];
-            let _ = self.context.db.update_entity_community(entity_id, &comm_id);
+        // Write community IDs to DB and collect the distinct set that changed.
+        let mut updated_comm_ids = std::collections::HashSet::new();
+        for (node, comm_id) in &communities {
+            let entity_id = self.graph[*node];
+            if self.context.db.update_entity_community(entity_id, comm_id).is_ok() {
+                updated_comm_ids.insert(comm_id.clone());
+            }
         }
-    }
+
+        // Fire CommunitiesUpdated only after all DB writes are done.
+        if !updated_comm_ids.is_empty() {
+            let comm_ids: Vec<String> = updated_comm_ids.into_iter().collect();
+            let _ = self.context.event_tx.send(crate::KnowledgeEvent::CommunitiesUpdated { comm_ids });
+        }
+}
+
 }
 
 pub async fn spawn_graph_observer(context: Arc<McpContext>, rx: broadcast::Receiver<KnowledgeEvent>) {

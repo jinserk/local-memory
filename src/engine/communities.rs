@@ -14,18 +14,17 @@ impl CommunityService {
     }
 
     pub async fn run(self, mut rx: broadcast::Receiver<KnowledgeEvent>) {
-        eprintln!("DEBUG: CommunityService starting...");
-        
+
         loop {
             tokio::select! {
                 Ok(event) = rx.recv() => {
-                    match event {
-                        KnowledgeEvent::RelationshipInserted { source_id, .. } => {
-                            if let Ok(Some(comm_id)) = self.context.db.get_entity_community_id(source_id) {
-                                let _ = self.summarize_community(&comm_id).await;
+                    if let KnowledgeEvent::CommunitiesUpdated { comm_ids } = event {
+                        for comm_id in &comm_ids {
+                            match self.summarize_community(comm_id).await {
+                                Ok(_) => {}
+                                Err(e) => eprintln!("[community] error summarizing {}: {}", comm_id, e),
                             }
                         }
-                        _ => {}
                     }
                 }
             }
@@ -41,13 +40,9 @@ impl CommunityService {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt = format!(
-            "Summarize the following group of related entities into a single thematic summary.\n\
-             Provide a title and a concise 2-3 sentence summary.\n\n\
-             Entities:\n{}\n\n\
-             Return as JSON with 'title' and 'summary' keys.",
-            context_text
-        );
+        // Use NuExtract-2.0 template format: prefix with sentinel so candle.rs knows
+        // this is a community summarization (not entity extraction).
+        let prompt = format!("NUEXTRACT_SUMMARY:\n{}", context_text);
 
         let response = self.context.model.complete(&prompt).await?;
         let content = response.content;

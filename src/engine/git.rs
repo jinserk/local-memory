@@ -12,11 +12,13 @@ pub async fn spawn_git_observer(context: Arc<McpContext>) {
         loop {
             if let Ok(current_commit) = get_latest_commit() {
                 if current_commit != last_commit && !current_commit.is_empty() {
-                    eprintln!("DEBUG: New git commit detected: {}", current_commit);
+                    eprintln!("[git] New commit detected: {}", current_commit);
                     
                     if let Ok(summary) = get_commit_summary(&current_commit) {
+                        // Truncate to first 500 chars to avoid hogging the LLM for huge diffs.
+                        let summary_truncated = if summary.len() > 500 { &summary[..500] } else { &summary };
                         let _ = context.get_pipeline().run_with_namespace(
-                            &format!("GIT COMMIT {}: {}", current_commit, summary),
+                            &format!("GIT COMMIT {}: {}", current_commit, summary_truncated),
                             json!({"type": "git_commit", "hash": current_commit}),
                             "git"
                         ).await;

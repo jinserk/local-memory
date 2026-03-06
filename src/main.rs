@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 let last = *monitor_last_activity.read().await;
                 if last.elapsed() > timeout_duration {
-                    eprintln!("DEBUG: Idle timeout reached ({}s). Terminating.", idle_timeout);
+                    eprintln!("[idle] Timeout reached ({}s). Terminating.", idle_timeout);
                     std::process::exit(0);
                 }
             }

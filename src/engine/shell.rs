@@ -21,7 +21,6 @@ pub async fn spawn_shell_observer(context: Arc<McpContext>) {
                         for line in &lines[last_processed_line..] {
                             // Filter for "interesting" commands (build, test, deploy, git, etc.)
                             if is_interesting_command(line) {
-                                eprintln!("DEBUG: Interesting shell command detected: {}", line);
                                 let _ = context.get_pipeline().run_with_namespace(
                                     &format!("SHELL COMMAND: {}", line),
                                     json!({"type": "shell_command", "cmd": line}),

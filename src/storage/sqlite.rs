@@ -368,7 +368,7 @@ impl SqliteDatabase {
 
     pub fn list_community_members(&self, comm_id: &str) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
-        let mut stmt = conn.prepare("SELECT name, description FROM entities WHERE community_id = ?")?;
+        let mut stmt = conn.prepare("SELECT name, description FROM entities WHERE community_id = ? AND is_latest = 1")?;
         let rows = stmt.query_map([comm_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let mut results = Vec::new();
         for row in rows { results.push(row?); }

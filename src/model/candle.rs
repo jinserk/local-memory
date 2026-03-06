@@ -8,6 +8,7 @@ use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use candle_transformers::models::phi3::{Model as Phi3Model, Config as Phi3Config};
+use candle_transformers::models::qwen2::{ModelForCausalLM as Qwen2Model, Config as Qwen2Config};
 use candle_transformers::generation::LogitsProcessor;
 use tokenizers::Tokenizer;
 use edgequake_llm::{LLMProvider, EmbeddingProvider, LLMResponse, LlmError, ChatMessage, CompletionOptions};
@@ -23,6 +24,7 @@ pub struct CandleProvider {
     device: Device,
     bert: RwLock<Option<BertModel>>,
     phi3: RwLock<Option<Phi3Model>>,
+    qwen2: RwLock<Option<Qwen2Model>>,
     tokenizer: RwLock<Option<Tokenizer>>,
     dimension: RwLock<usize>,
 }
@@ -36,6 +38,7 @@ impl CandleProvider {
             device: Device::Cpu,
             bert: RwLock::new(None),
             phi3: RwLock::new(None),
+            qwen2: RwLock::new(None),
             tokenizer: RwLock::new(None),
             dimension: RwLock::new(768),
         }
@@ -145,6 +148,26 @@ impl CandleProvider {
         *tokenizer_guard = Some(tokenizer);
         Ok(())
     }
+
+    pub async fn load_qwen2(&self, model_dir: &Path) -> Result<()> {
+        let mut qwen2_guard = self.qwen2.write().await;
+        let mut tokenizer_guard = self.tokenizer.write().await;
+
+        if qwen2_guard.is_some() { return Ok(()); }
+
+        let config_str = std::fs::read_to_string(model_dir.join("config.json"))?;
+        // Qwen2Config only needs the text-tower fields; serde will ignore vision_config etc.
+        let config: Qwen2Config = serde_json::from_str(&config_str)?;
+        let tokenizer = Tokenizer::from_file(model_dir.join("tokenizer.json")).map_err(anyhow::Error::msg)?;
+
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&[model_dir.join("model.safetensors")], candle_core::DType::F32, &self.device)?
+        };
+
+        *qwen2_guard = Some(Qwen2Model::new(&config, vb)?);
+        *tokenizer_guard = Some(tokenizer);
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -154,47 +177,133 @@ impl LLMProvider for CandleProvider {
     fn max_context_length(&self) -> usize { 4096 }
 
     async fn complete(&self, prompt: &str) -> Result<LLMResponse, LlmError> {
-        let mut phi3_guard = self.phi3.write().await;
-        if let Some(model) = phi3_guard.as_mut() {
-            let tokenizer_guard = self.tokenizer.read().await;
-            let tokenizer = tokenizer_guard.as_ref().ok_or_else(|| LlmError::Unknown("Tokenizer missing".into()))?;
-            
-            // Format prompt for NuExtract
-            let final_prompt = if !prompt.contains("<|input|>") {
-                format!("<|input|>\n### Template:\n{{\n  \"entities\": [{{\"name\": \"string\", \"type\": \"string\", \"description\": \"string\"}}],\n  \"relationships\": [{{\"source\": \"string\", \"target\": \"string\", \"predicate\": \"string\", \"description\": \"string\"}}]\n}}\n### Text:\n{}\n<|output|>\n", prompt)
-            } else {
-                prompt.to_string()
-            };
-
-            let tokens = tokenizer.encode(final_prompt, true).map_err(|e| LlmError::Unknown(e.to_string()))?;
-            let mut tokens = tokens.get_ids().to_vec();
-            let mut generated_tokens = Vec::new();
-            let mut logits_processor = LogitsProcessor::new(42, None, None);
-            let eos_token = tokenizer.get_vocab(true).get("<|endoftext|>").cloned().or_else(|| tokenizer.get_vocab(true).get("<|end_of_text|>").cloned()).unwrap_or(0);
-
-            for _ in 0..512 {
-                let input = Tensor::new(tokens.as_slice(), &self.device).map_err(|e| LlmError::Unknown(e.to_string()))?.unsqueeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?;
-                let logits = model.forward(&input, tokens.len() - generated_tokens.len()).map_err(|e| LlmError::Unknown(e.to_string()))?;
-                let logits = logits.squeeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?;
-                let token = logits_processor.sample(&logits).map_err(|e| LlmError::Unknown(e.to_string()))?;
-                
-                if token == eos_token { break; }
-                generated_tokens.push(token);
-                tokens.push(token);
+        // --- Phi3 branch (NuExtract-1.5) ---
+        {
+            let mut phi3_guard = self.phi3.write().await;
+            if let Some(model) = phi3_guard.as_mut() {
+                let tokenizer_guard = self.tokenizer.read().await;
+                let tokenizer = tokenizer_guard.as_ref().ok_or_else(|| LlmError::Unknown("Tokenizer missing".into()))?;
+                let final_prompt = if !prompt.contains("<|input|>") {
+                    format!("<|input|>\n### Template:\n{{\n  \"entities\": [{{\"name\": \"string\", \"type\": \"string\", \"description\": \"string\"}}],\n  \"relationships\": [{{\"source\": \"string\", \"target\": \"string\", \"predicate\": \"string\", \"description\": \"string\"}}]\n}}\n### Text:\n{}\n<|output|>\n", prompt)
+                } else {
+                    prompt.to_string()
+                };
+                let tokens = tokenizer.encode(final_prompt, true).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                let mut tokens = tokens.get_ids().to_vec();
+                let mut generated_tokens = Vec::new();
+                let mut logits_processor = LogitsProcessor::new(42, None, None);
+                let eos_token = tokenizer.get_vocab(true).get("<|endoftext|>").cloned().or_else(|| tokenizer.get_vocab(true).get("<|end_of_text|>").cloned()).unwrap_or(0);
+                for _ in 0..512 {
+                    let input = Tensor::new(tokens.as_slice(), &self.device).map_err(|e| LlmError::Unknown(e.to_string()))?.unsqueeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    let logits = model.forward(&input, tokens.len() - generated_tokens.len()).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    let logits = logits.squeeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    let token = logits_processor.sample(&logits).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    if token == eos_token { break; }
+                    generated_tokens.push(token);
+                    tokens.push(token);
+                }
+                let content = tokenizer.decode(&generated_tokens, true).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                return Ok(LLMResponse {
+                    content,
+                    model: self.model_name.clone(),
+                    prompt_tokens: tokens.len() - generated_tokens.len(),
+                    completion_tokens: generated_tokens.len(),
+                    total_tokens: tokens.len(),
+                    finish_reason: Some("stop".to_string()),
+                    tool_calls: vec![],
+                    metadata: std::collections::HashMap::new(),
+                    cache_hit_tokens: Some(0), thinking_tokens: Some(0), thinking_content: None,
+                });
             }
+        }
 
-            let content = tokenizer.decode(&generated_tokens, true).map_err(|e| LlmError::Unknown(e.to_string()))?;
-            return Ok(LLMResponse {
-                content,
-                model: self.model_name.clone(),
-                prompt_tokens: tokens.len() - generated_tokens.len(),
-                completion_tokens: generated_tokens.len(),
-                total_tokens: tokens.len(),
-                finish_reason: Some("stop".to_string()),
-                tool_calls: vec![],
-                metadata: std::collections::HashMap::new(),
-                cache_hit_tokens: Some(0), thinking_tokens: Some(0), thinking_content: None,
-            });
+        // --- Qwen2 branch (NuExtract-2.0+) ---
+        {
+            let mut qwen2_guard = self.qwen2.write().await;
+            if let Some(model) = qwen2_guard.as_mut() {
+                // Clear KV cache so we feed the full sequence fresh each generation.
+                model.clear_kv_cache();
+                let tokenizer_guard = self.tokenizer.read().await;
+                let tokenizer = tokenizer_guard.as_ref().ok_or_else(|| LlmError::Unknown("Tokenizer missing".into()))?;
+                // NuExtract-2.0 uses Qwen2 chat template with <|im_start|> markers
+                // NuExtract-2.0 uses a specific chat template:
+                // <|im_start|>user\n# Template:\n{schema}\n# Context:\n{text}<|im_end|>\n<|im_start|>assistant
+                // We detect whether the caller already formatted the prompt, or we wrap it.
+                let final_prompt = if prompt.contains("<|im_start|>") {
+                    prompt.to_string()
+                } else if prompt.starts_with("NUEXTRACT_SUMMARY:") {
+                    // Community summarization: extract title+summary from entity list.
+                    let context = prompt.trim_start_matches("NUEXTRACT_SUMMARY:").trim();
+                    let template = r#"{"title":"string","summary":"string"}"#;
+                    format!(
+                        "<|im_start|>user\n# Template:\n{}\n# Context:\n{}\n<|im_end|>\n<|im_start|>assistant\n",
+                        template, context
+                    )
+                } else {
+                    // Entity/relationship extraction from ingestion.rs.
+                    // ingestion.rs puts the actual text after "Text: " at the end.
+                    let text_body = if let Some(pos) = prompt.rfind("Text: ") {
+                        prompt[pos + 6..].trim()
+                    } else {
+                        prompt.trim()
+                    };
+                    let template = r#"{"entities":[{"name":"verbatim-string","type":"string","description":"string"}],"relationships":[{"source":"verbatim-string","target":"verbatim-string","predicate":"verbatim-string","description":"string"}]}"#;
+                    format!(
+                        "<|im_start|>user\n# Template:\n{}\n# Context:\n{}\n<|im_end|>\n<|im_start|>assistant\n",
+                        template, text_body
+                    )
+                };
+                let encoding = tokenizer.encode(final_prompt, true).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                let prompt_ids: Vec<u32> = encoding.get_ids().to_vec();
+                let prompt_len = prompt_ids.len();
+                let mut generated_tokens = Vec::new();
+                let mut logits_processor = LogitsProcessor::new(42, None, None);
+                let vocab = tokenizer.get_vocab(true);
+                let eos_token = vocab.get("<|im_end|>").cloned()
+                    .or_else(|| vocab.get("<|endoftext|>").cloned())
+                    .unwrap_or(151645);
+
+                // Prefill: feed the full prompt, get logits for the last position.
+                model.clear_kv_cache();
+                let prompt_tensor = Tensor::new(prompt_ids.as_slice(), &self.device)
+                    .map_err(|e| LlmError::Unknown(e.to_string()))?.unsqueeze(0)
+                    .map_err(|e| LlmError::Unknown(e.to_string()))?;
+                let logits = model.forward(&prompt_tensor, 0).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                let logits = logits.squeeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?.squeeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                let next_token = logits_processor.sample(&logits).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                if next_token != eos_token {
+                    generated_tokens.push(next_token);
+                }
+
+                // Decode: one token at a time, kv-cache accumulates.
+                for _ in 0..511 {
+                    if generated_tokens.is_empty() { break; }
+                    let last_token = *generated_tokens.last().unwrap();
+                    if last_token == eos_token { generated_tokens.pop(); break; }
+                    let input = Tensor::new(&[last_token], &self.device)
+                        .map_err(|e| LlmError::Unknown(e.to_string()))?.unsqueeze(0)
+                        .map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    // seqlen_offset = number of tokens already in the KV cache (prompt + generated so far - 1).
+                    let seqlen_offset = prompt_len + generated_tokens.len() - 1;
+                    let logits = model.forward(&input, seqlen_offset).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    let logits = logits.squeeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?.squeeze(0).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    let token = logits_processor.sample(&logits).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                    if token == eos_token { break; }
+                    generated_tokens.push(token);
+                }
+                let content = tokenizer.decode(&generated_tokens, true).map_err(|e| LlmError::Unknown(e.to_string()))?;
+                return Ok(LLMResponse {
+                    content,
+                    model: self.model_name.clone(),
+                    prompt_tokens: prompt_len,
+                    completion_tokens: generated_tokens.len(),
+                    total_tokens: prompt_len + generated_tokens.len(),
+                    finish_reason: Some("stop".to_string()),
+                    tool_calls: vec![],
+                    metadata: std::collections::HashMap::new(),
+                    cache_hit_tokens: Some(0), thinking_tokens: Some(0), thinking_content: None,
+                });
+            }
         }
 
         // Fallback to heuristic
@@ -240,7 +349,6 @@ impl LLMProvider for CandleProvider {
         } else {
             format!("Local HuggingFace model ({}) response.", self.model_name)
         };
-
         Ok(LLMResponse {
             content,
             model: self.model_name.clone(),
@@ -307,8 +415,10 @@ impl crate::model::UnifiedModel for CandleProvider {
         };
         if self.model_name.contains("bert") || self.model_name.contains("nomic") {
             self.load_bert(&model_dir).await?;
-        } else if self.model_name.contains("NuExtract") || self.model_name.contains("phi") {
+        } else if self.model_name.contains("NuExtract-1.5") || self.model_name.contains("phi") || self.model_name.contains("Phi") {
             self.load_phi3(&model_dir).await?;
+        } else if self.model_name.contains("NuExtract") || self.model_name.contains("qwen") || self.model_name.contains("Qwen") {
+            self.load_qwen2(&model_dir).await?;
         }
         Ok(())
     }

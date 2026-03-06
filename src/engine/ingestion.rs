@@ -41,7 +41,7 @@ impl IngestionPipeline {
     }
 
     pub async fn run_image(&self, path: &Path, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
-        eprintln!("DEBUG: Performing OCR on {:?}", path);
+        eprintln!("[ocr] Processing image: {:?}", path);
         let extracted_text = format!("Image file: {:?}. [OCR Placeholder: Simulated text from architecture diagram]", path);
         let mut img_metadata = metadata.clone();
         if let Some(obj) = img_metadata.as_object_mut() {
@@ -207,16 +207,22 @@ impl IngestionPipeline {
                 let t_name = rel.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let pred = rel.get("predicate").and_then(|v| v.as_str()).unwrap_or("");
                 let desc = rel.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                let s = self.db.get_entity_by_name_with_namespace(s_name, namespace)?;
-                let t = self.db.get_entity_by_name_with_namespace(t_name, namespace)?;
-                if let (Some((s_id, _, _)), Some((t_id, _, _))) = (s, t) {
+                if s_name.is_empty() || t_name.is_empty() { continue; }
+                // Auto-upsert entities referenced in relationships that the LLM omitted from 'entities'.
+                // Use relationship description as a fallback entity description.
+                let s_id = self.db.get_entity_by_name_with_namespace(s_name, namespace)?
+                    .map(|(id, _, _)| id)
+                    .or_else(|| self.db.insert_entity_with_namespace(s_name, "Concept", desc, namespace).ok());
+                let t_id = self.db.get_entity_by_name_with_namespace(t_name, namespace)?
+                    .map(|(id, _, _)| id)
+                    .or_else(|| self.db.insert_entity_with_namespace(t_name, "Concept", desc, namespace).ok());
+                if let (Some(s_id), Some(t_id)) = (s_id, t_id) {
                     if self.db.insert_relationship(s_id, t_id, pred, desc).is_ok() {
-                        // Emit Event
                         if let Some(tx) = &self.event_tx {
-                            let _ = tx.send(KnowledgeEvent::RelationshipInserted { 
-                                source_id: s_id, 
-                                target_id: t_id, 
-                                predicate: pred.to_string() 
+                            let _ = tx.send(KnowledgeEvent::RelationshipInserted {
+                                source_id: s_id,
+                                target_id: t_id,
+                                predicate: pred.to_string()
                             });
                         }
                     }
