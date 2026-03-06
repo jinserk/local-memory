@@ -87,10 +87,12 @@ async fn test_ingestion_with_llm_extractor() -> Result<()> {
     let db = Arc::new(SqliteDatabase::open(&db_path, dimension)?);
     
     let model = Arc::new(MockUnified { extractor: MockExtractor, dimension });
+    let (event_tx, _rx) = tokio::sync::broadcast::channel(16);
     let context = McpContext {
         db: db.clone(),
         model: model.clone(),
         config: Config::default(),
+        event_tx,
     };
 
     // Run ingestion

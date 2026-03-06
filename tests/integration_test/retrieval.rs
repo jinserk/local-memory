@@ -36,7 +36,7 @@ fn test_recall_bench() -> Result<()> {
         let v_short = slice_vector(v, 256);
         let v_bit = encode_bq(v);
         
-        db.insert_document(id, &format!("Doc {}", i), "content", &json!({"index": i, "text": format!("content {}", i)}), v, &v_short, &v_bit)?;
+        db.insert_document_with_namespace(id, &format!("Doc {}", i), "content", &json!({"index": i, "text": format!("content {}", i)}), v, &v_short, &v_bit, "default")?;
     }
 
     let query = (&data.get(0)? + &Tensor::randn(0.0f32, 0.01f32, (dim,), &device)?)?;

@@ -1,0 +1,61 @@
+architectures:
+  bert:
+    role: embedding
+    query_prefix: "search_query: "
+    document_prefix: "search_document: "
+    # dimension is read from the model's config.json hidden_size at load time
+
+  phi3:
+    role: generation
+    max_new_tokens: 512
+    eos_tokens:
+      - "<|endoftext|>"
+      - "<|end_of_text|>"
+    eos_fallback_id: 0
+    prompt_templates:
+      extraction: |
+        <|input|>
+        ### Template:
+        {"entities":[{"name":"string","type":"string","description":"string"}],"relationships":[{"source":"string","target":"string","predicate":"string","description":"string"}]}
+        ### Text:
+        {text}
+        <|output|>
+
+  qwen2:
+    role: generation
+    max_new_tokens: 512
+    eos_tokens:
+      - "<|im_end|>"
+      - "<|endoftext|>"
+    eos_fallback_id: 151645
+    prompt_templates:
+      extraction: |
+        <|im_start|>user
+        # Template:
+        {"entities":[{"name":"verbatim-string","type":"string","description":"string"}],"relationships":[{"source":"verbatim-string","target":"verbatim-string","predicate":"verbatim-string","description":"string"}]}
+        # Context:
+        {text}
+        <|im_end|>
+        <|im_start|>assistant
+      summary: |
+        <|im_start|>user
+        # Template:
+        {"title":"string","summary":"string"}
+        # Context:
+        {text}
+        <|im_end|>
+        <|im_start|>assistant
+
+models:
+  "nomic-ai/nomic-embed-text-v1.5": { arch: bert }
+  "nomic-ai/nomic-embed-text-v1":   { arch: bert }
+  "numind/NuExtract-1.5":           { arch: phi3,  prompt_template: extraction }
+  "numind/NuExtract-2.0-2B":        { arch: qwen2, prompt_template: extraction }
+  "numind/NuExtract-2.0-4B":        { arch: qwen2, prompt_template: extraction }
+  "numind/NuExtract-2.0-8B":        { arch: qwen2, prompt_template: extraction }
+
+patterns:
+  - { contains: "nomic", arch: bert }
+  - { contains: "bert",  arch: bert }
+  - { contains: "phi",   arch: phi3,  prompt_template: extraction }
+  - { contains: "qwen",  arch: qwen2, prompt_template: extraction }

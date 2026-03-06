@@ -38,20 +38,21 @@ impl McpTestServer {
         let storage_path = temp_dir.path().join("storage");
         std::fs::create_dir_all(&storage_path)?;
 
-        // Use Ollama for LLM extractor in tests to avoid HuggingFace download issues
+        // Use local HuggingFace (Candle) models — files are committed under .local-memory/models.
+        // auto_download=false prevents any network access during tests.
         let config = json!({
             "storage_path": storage_path.to_string_lossy(),
             "model_path": base_models_path.to_string_lossy(),
             "embedding": {
-                "name": "nomic-embed-text-v2-moe",
-                "provider": "ollama",
-                "auto_download": true, 
+                "name": "nomic-ai/nomic-embed-text-v1.5",
+                "provider": "huggingface",
+                "auto_download": false,
                 "dimension": 768
             },
             "llm_extractor": {
-                "provider": "ollama",
-                "name": "frob/nuextract-2.0:8b-q8_0",
-                "auto_download": true
+                "provider": "huggingface",
+                "name": "numind/NuExtract-2.0-2B",
+                "auto_download": false
             }
         });
 

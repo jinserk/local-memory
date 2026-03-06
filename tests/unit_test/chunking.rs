@@ -23,7 +23,7 @@ async fn test_explicit_chunking() -> anyhow::Result<()> {
         }
     }
 
-    let pipeline = IngestionPipeline::new(Arc::new(MockEmbedder), db.clone(), None, false);
+    let pipeline = IngestionPipeline::new(Arc::new(MockEmbedder), db.clone(), None, false, None);
     
     let text = "Chunk 1 ---CHUNK--- Chunk 2";
     let id = pipeline.run(text, json!({"title": "ChunkTest"})).await?;

@@ -40,9 +40,10 @@ impl CommunityService {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Use NuExtract-2.0 template format: prefix with sentinel so candle.rs knows
-        // this is a community summarization (not entity extraction).
-        let prompt = format!("NUEXTRACT_SUMMARY:\n{}", context_text);
+        // Use the named "summary" template via TEMPLATE:<name> prefix.
+        // CandleProvider::format_prompt recognises this tag and applies the
+        // correct prompt template from models.yaml.
+        let prompt = format!("TEMPLATE:summary\n{}", context_text);
 
         let response = self.context.model.complete(&prompt).await?;
         let content = response.content;
