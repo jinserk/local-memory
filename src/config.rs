@@ -56,16 +56,6 @@ pub struct ModelConfig {
     pub base_url: Option<String>,
     /// Optional API key (used for OpenAI-compatible providers)
     pub api_key: Option<String>,
-    /// Optional OAuth access token
-    pub access: Option<String>,
-    /// Optional OAuth refresh token
-    pub refresh: Option<String>,
-    /// Optional OAuth token expiration timestamp (ms)
-    pub expires: Option<u64>,
-    /// Optional OAuth client ID
-    pub client_id: Option<String>,
-    /// Optional OAuth client secret
-    pub client_secret: Option<String>,
 }
 
 fn default_auto_download() -> bool { true }
@@ -80,11 +70,6 @@ impl Default for ModelConfig {
             dimension: 768,
             base_url: None,
             api_key: None,
-            access: None,
-            refresh: None,
-            expires: None,
-            client_id: None,
-            client_secret: None,
         }
     }
 }
@@ -110,16 +95,6 @@ pub struct ExtractorConfig {
     pub auto_download: bool,
     /// Optional API key
     pub api_key: Option<String>,
-    /// Optional OAuth access token
-    pub access: Option<String>,
-    /// Optional OAuth refresh token
-    pub refresh: Option<String>,
-    /// Optional OAuth token expiration timestamp (ms)
-    pub expires: Option<u64>,
-    /// Optional OAuth client ID
-    pub client_id: Option<String>,
-    /// Optional OAuth client secret
-    pub client_secret: Option<String>,
     /// Optional base URL for the API
     pub base_url: Option<String>,
 }
@@ -131,11 +106,6 @@ impl Default for ExtractorConfig {
             name: "numind/NuExtract-1.5".to_string(),
             auto_download: true,
             api_key: None,
-            access: None,
-            refresh: None,
-            expires: None,
-            client_id: None,
-            client_secret: None,
             base_url: None,
         }
     }
@@ -206,11 +176,6 @@ impl Default for Config {
                 name: "numind/NuExtract-1.5".to_string(),
                 auto_download: true,
                 api_key: None,
-                access: None,
-                refresh: None,
-                expires: None,
-                client_id: None,
-                client_secret: None,
                 base_url: None,
             }),
             semantic_chunking: false,

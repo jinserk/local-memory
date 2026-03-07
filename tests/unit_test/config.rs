@@ -41,19 +41,15 @@ fn test_config_loading_with_extractor_aligned() {
 }
 
 #[test]
-fn test_gemini_oauth_config() {
+fn test_gemini_config() {
     let json = r#"{
         "embedding": {
             "provider": "gemini",
             "name": "text-embedding-004",
-            "access": "mock-access",
-            "refresh": "mock-refresh",
-            "expires": 123456
+            "api_key": "mock-key"
         }
     }"#;
     
     let config: Config = serde_json::from_str(json).unwrap();
-    assert_eq!(config.embedding.access, Some("mock-access".to_string()));
-    assert_eq!(config.embedding.refresh, Some("mock-refresh".to_string()));
-    assert_eq!(config.embedding.expires, Some(123456));
+    assert_eq!(config.embedding.api_key, Some("mock-key".to_string()));
 }

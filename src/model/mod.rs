@@ -2,7 +2,6 @@ use std::sync::Arc;
 use edgequake_llm::{LLMProvider, OpenAIProvider, OllamaProvider, EmbeddingProvider};
 use crate::config::{Config, ExtractorProvider, ModelProvider};
 use anyhow::Result;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod base;
 pub mod candle;
@@ -13,17 +12,6 @@ pub mod auth;
 pub use base::{UnifiedModel, GenericUnifiedModel, check_llm_connectivity, check_embedding_connectivity};
 pub use candle::CandleProvider;
 pub use ollama::pull_ollama_model;
-
-fn is_token_expired(expires_ms: Option<u64>) -> bool {
-    if let Some(expires) = expires_ms {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        return now > expires;
-    }
-    false
-}
 
 use async_trait::async_trait;
 use edgequake_llm::LlmError;
@@ -120,7 +108,6 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
                 .embedding
                 .api_key
                 .clone()
-                .or_else(|| config.embedding.access.clone())
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                 .or_else(|| auth::get_opencode_key("opencode"))
                 .ok_or_else(|| anyhow::anyhow!("Missing API key for OpenAI embedding"))?;
@@ -135,30 +122,14 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
             )
         }
         ModelProvider::Gemini => {
-            if is_token_expired(config.embedding.expires) {
-                eprintln!("  ! Warning: Gemini embedding OAuth token in config is EXPIRED.");
-            }
             let api_key = config
                 .embedding
                 .api_key
                 .clone()
-                .or_else(|| config.embedding.access.clone())
                 .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-                .or_else(|| {
-                    let auth_data = auth::load_opencode_auth();
-                    if let Some(ref a) = auth_data {
-                         if let Some(ref g) = a.google {
-                             if is_token_expired(g.expires) {
-                                 eprintln!("  ! Warning: Gemini OAuth token in OpenCode auth.json is EXPIRED.");
-                             }
-                         }
-                    }
-                    auth_data.and_then(|a| a.google).and_then(|g| g.access)
-                })
-                .ok_or_else(|| anyhow::anyhow!("Missing Google API key/token for Gemini embedding. (Checked config api_key/access, GOOGLE_API_KEY, and OpenCode auth.json)"))?;
+                .or_else(|| auth::get_google_token())
+                .ok_or_else(|| anyhow::anyhow!("Missing Google API key for Gemini embedding. (Checked config api_key, GOOGLE_API_KEY, and OpenCode auth.json)"))?;
             
-            // If it looks like an API key (AIza...), use the native Gemini provider for embedding
-            // to avoid OpenAI adapter incompatibilities (like missing 'index' field).
             if api_key.starts_with("AIza") {
                 Arc::new(GeminiEmbeddingProvider {
                     api_key,
@@ -166,7 +137,6 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
                     dimension: config.embedding.dimension,
                 })
             } else {
-                // For OAuth tokens, still use the OpenAI adapter but it might fail until Google fixes it
                 let base_url = config
                     .embedding
                     .base_url
@@ -202,7 +172,6 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
                 let api_key = ext_config
                     .api_key
                     .clone()
-                    .or_else(|| ext_config.access.clone())
                     .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                     .or_else(|| auth::get_opencode_key("opencode"))
                     .ok_or_else(|| anyhow::anyhow!("Missing OpenAI API key"))?;
@@ -215,26 +184,12 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
                 Arc::new(provider)
             }
             ExtractorProvider::Gemini => {
-                if is_token_expired(ext_config.expires) {
-                    eprintln!("  ! Warning: Gemini LLM OAuth token in config is EXPIRED.");
-                }
                 let api_key = ext_config
                     .api_key
                     .clone()
-                    .or_else(|| ext_config.access.clone())
                     .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-                    .or_else(|| {
-                        let auth_data = auth::load_opencode_auth();
-                        if let Some(ref a) = auth_data {
-                             if let Some(ref g) = a.google {
-                                 if is_token_expired(g.expires) {
-                                     eprintln!("  ! Warning: Gemini OAuth token in OpenCode auth.json is EXPIRED.");
-                                 }
-                             }
-                        }
-                        auth_data.and_then(|a| a.google).and_then(|g| g.access)
-                    })
-                    .ok_or_else(|| anyhow::anyhow!("Missing Google API key/token for Gemini LLM. (Checked config api_key/access, GOOGLE_API_KEY, and OpenCode auth.json)"))?;
+                    .or_else(|| auth::get_google_token())
+                    .ok_or_else(|| anyhow::anyhow!("Missing Google API key for Gemini LLM. (Checked config api_key, GOOGLE_API_KEY, and OpenCode auth.json)"))?;
                 let base_url = ext_config
                     .base_url
                     .clone()
@@ -290,7 +245,6 @@ pub fn get_llm_provider(config: &Config) -> Option<Arc<dyn LLMProvider + Send + 
                 let key = ext_config
                     .api_key
                     .clone()
-                    .or_else(|| ext_config.access.clone())
                     .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                     .or_else(|| auth::get_opencode_key("opencode"));
 
@@ -307,22 +261,12 @@ pub fn get_llm_provider(config: &Config) -> Option<Arc<dyn LLMProvider + Send + 
                 let key = ext_config
                     .api_key
                     .clone()
-                    .or_else(|| ext_config.access.clone())
-                    .or_else(|| std::env::var("GOOGLE_API_KEY").ok());
+                    .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
+                    .or_else(|| auth::get_google_token());
                 
                 let key = match key {
                     Some(k) => k,
-                    None => {
-                        let auth_data = auth::load_opencode_auth();
-                        if let Some(ref a) = auth_data {
-                             if let Some(ref g) = a.google {
-                                 if is_token_expired(g.expires) {
-                                     eprintln!("  ! Warning: Gemini OAuth token in OpenCode auth.json is EXPIRED.");
-                                 }
-                             }
-                        }
-                        auth_data.and_then(|a| a.google).and_then(|g| g.access)?
-                    }
+                    None => return None,
                 };
 
                 let base_url = ext_config

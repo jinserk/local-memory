@@ -4,7 +4,7 @@ use std::fs;
 #[derive(Debug, Deserialize, Clone)]
 pub struct OpenCodeAuth {
     pub ollama: Option<ApiAuth>,
-    pub google: Option<GoogleAuth>,
+    pub google: Option<ApiAuth>,
     pub opencode: Option<ApiAuth>,
     pub huggingface: Option<ApiAuth>,
     pub modal: Option<ApiAuth>,
@@ -14,14 +14,6 @@ pub struct OpenCodeAuth {
 pub struct ApiAuth {
     pub r#type: String,
     pub key: String,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct GoogleAuth {
-    pub r#type: String,
-    pub refresh: Option<String>,
-    pub access: Option<String>,
-    pub expires: Option<u64>,
 }
 
 pub fn load_opencode_auth() -> Option<OpenCodeAuth> {
@@ -37,7 +29,7 @@ pub fn load_opencode_auth() -> Option<OpenCodeAuth> {
 
 pub fn get_google_token() -> Option<String> {
     let auth = load_opencode_auth()?;
-    auth.google.and_then(|g| g.access)
+    auth.google.map(|g| g.key)
 }
 
 pub fn get_opencode_key(provider_name: &str) -> Option<String> {
