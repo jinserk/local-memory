@@ -8,6 +8,11 @@ fn test_get_llm_provider_ollama_config() {
         provider: ExtractorProvider::Ollama,
         name: "llama3".to_string(),
         api_key: None,
+        access: None,
+        refresh: None,
+        expires: None,
+        client_id: None,
+        client_secret: None,
         base_url: Some("http://localhost:11434".to_string()),
         auto_download: true,
     });

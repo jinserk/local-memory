@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::engine::funnel::SearchFunnel;
 use crate::storage::sqlite::SqliteDatabase;
-use crate::model::{get_unified_model};
+use crate::model::{get_unified_model, check_llm_connectivity, check_embedding_connectivity};
 use crate::engine::vectors::{encode_bq, slice_vector};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -313,7 +313,20 @@ async fn run_init(config: &Config) -> Result<()> {
 
     let model = get_unified_model(config).await?;
     model.prepare().await?;
-    println!("  {} Model prepared (pulled/downloaded)", "✓".green());
+    println!("  {} Models prepared (pulled/downloaded if local)", "✓".green());
+
+    // Readiness Checks
+    print!("  Checking embedding readiness... ");
+    match check_embedding_connectivity(model.as_ref()).await {
+        Ok(_) => println!("{}", "✓".green()),
+        Err(e) => println!("{} ({})", "! Fail".red(), e),
+    }
+
+    print!("  Checking LLM extractor readiness... ");
+    match check_llm_connectivity(model.as_ref()).await {
+        Ok(_) => println!("{}", "✓".green()),
+        Err(e) => println!("{} ({})", "! Fail".red(), e),
+    }
 
     let db_path = config.storage_path.join("local-memory.db");
     let _db = SqliteDatabase::open(&db_path, model.dimension())?;

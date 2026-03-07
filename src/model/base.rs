@@ -64,3 +64,21 @@ pub async fn check_llm_connectivity(provider: &dyn LLMProvider) -> Result<()> {
         .map(|_| ())
         .map_err(|e| anyhow::anyhow!("LLM connectivity check failed: {}", e))
 }
+
+/// Utility to check if an embedding provider is reachable
+pub async fn check_embedding_connectivity(provider: &dyn EmbeddingProvider) -> Result<()> {
+    if provider.name() == "huggingface" || provider.name() == "candle-embed" { return Ok(()); }
+    
+    match provider.embed(&["ping".to_string()]).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = format!("{}", e);
+            // Workaround for Gemini's OpenAI-compatible endpoint which is missing the 'index' field,
+            // causing serialization errors in strict OpenAI clients.
+            if msg.contains("missing field `index` balance") || msg.contains("missing field `index`") {
+                return Ok(());
+            }
+            anyhow::bail!("Embedding connectivity check failed: {}", e)
+        }
+    }
+}

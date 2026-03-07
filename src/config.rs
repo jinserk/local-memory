@@ -36,6 +36,7 @@ pub enum ModelProvider {
     Local,
     Ollama,
     OpenAI,
+    Gemini,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -55,6 +56,16 @@ pub struct ModelConfig {
     pub base_url: Option<String>,
     /// Optional API key (used for OpenAI-compatible providers)
     pub api_key: Option<String>,
+    /// Optional OAuth access token
+    pub access: Option<String>,
+    /// Optional OAuth refresh token
+    pub refresh: Option<String>,
+    /// Optional OAuth token expiration timestamp (ms)
+    pub expires: Option<u64>,
+    /// Optional OAuth client ID
+    pub client_id: Option<String>,
+    /// Optional OAuth client secret
+    pub client_secret: Option<String>,
 }
 
 fn default_auto_download() -> bool { true }
@@ -69,6 +80,11 @@ impl Default for ModelConfig {
             dimension: 768,
             base_url: None,
             api_key: None,
+            access: None,
+            refresh: None,
+            expires: None,
+            client_id: None,
+            client_secret: None,
         }
     }
 }
@@ -94,8 +110,35 @@ pub struct ExtractorConfig {
     pub auto_download: bool,
     /// Optional API key
     pub api_key: Option<String>,
+    /// Optional OAuth access token
+    pub access: Option<String>,
+    /// Optional OAuth refresh token
+    pub refresh: Option<String>,
+    /// Optional OAuth token expiration timestamp (ms)
+    pub expires: Option<u64>,
+    /// Optional OAuth client ID
+    pub client_id: Option<String>,
+    /// Optional OAuth client secret
+    pub client_secret: Option<String>,
     /// Optional base URL for the API
     pub base_url: Option<String>,
+}
+
+impl Default for ExtractorConfig {
+    fn default() -> Self {
+        Self {
+            provider: ExtractorProvider::HuggingFace,
+            name: "numind/NuExtract-1.5".to_string(),
+            auto_download: true,
+            api_key: None,
+            access: None,
+            refresh: None,
+            expires: None,
+            client_id: None,
+            client_secret: None,
+            base_url: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -144,8 +187,12 @@ fn default_idle_timeout() -> u64 { 3600 }
 fn default_stage1_candidates() -> usize { 100 }
 fn default_stage2_candidates() -> usize { 20 }
 
-fn default_storage_path() -> PathBuf { PathBuf::from(".local-memory/storage") }
-fn default_model_path() -> PathBuf { PathBuf::from(".local-memory/models") }
+fn default_storage_path() -> PathBuf { 
+    home::home_dir().map(|h| h.join(".local-memory/storage")).unwrap_or_else(|| PathBuf::from(".local-memory/storage")) 
+}
+fn default_model_path() -> PathBuf { 
+    home::home_dir().map(|h| h.join(".local-memory/models")).unwrap_or_else(|| PathBuf::from(".local-memory/models"))
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -159,6 +206,11 @@ impl Default for Config {
                 name: "numind/NuExtract-1.5".to_string(),
                 auto_download: true,
                 api_key: None,
+                access: None,
+                refresh: None,
+                expires: None,
+                client_id: None,
+                client_secret: None,
                 base_url: None,
             }),
             semantic_chunking: false,
@@ -173,15 +225,33 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Self {
-        let config_path = env::var("LOCAL_MEMORY_CONFIG")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(".local-memory/config.json"));
+        let config_path = if let Ok(p) = env::var("LOCAL_MEMORY_CONFIG") {
+            PathBuf::from(p)
+        } else {
+            // Priority 1: Current directory .local-memory/config.json
+            let local = PathBuf::from(".local-memory/config.json");
+            if local.exists() {
+                local
+            } else {
+                // Priority 2: Home directory ~/.local-memory/config.json
+                home::home_dir().map(|h| h.join(".local-memory/config.json")).unwrap_or(local)
+            }
+        };
 
-        if config_path.exists()
-            && let Ok(content) = fs::read_to_string(&config_path)
-                && let Ok(config) = serde_json::from_str(&content) {
-                    return config;
+        if config_path.exists() {
+            match fs::read_to_string(&config_path) {
+                Ok(content) => {
+                    match serde_json::from_str::<Config>(&content) {
+                        Ok(config) => {
+                            eprintln!("DEBUG: Config loaded successfully from {}", config_path.display());
+                            return config;
+                        },
+                        Err(e) => eprintln!("  ! Warning: Failed to parse config file at {}: {}", config_path.display(), e),
+                    }
                 }
+                Err(e) => eprintln!("  ! Warning: Failed to read config file at {}: {}", config_path.display(), e),
+            }
+        }
 
         Config::default()
     }
