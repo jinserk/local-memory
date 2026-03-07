@@ -2,7 +2,8 @@ schema: spec-driven
 
 # Project context
 context: |
-  Project: local-memory - High-performance local GraphRAG memory system with MCP integration
+  #XM|  Project: local-memory - High-performance local GraphRAG memory system with MCP integration
+#JY|    - SUPERMEMORY: The overarching "Living Knowledge" strategy and product vision.
   
   Description:
     A Rust-based GraphRAG memory system that stores, searches, and retrieves memories
@@ -120,4 +121,5 @@ rules:
   tasks:
     - Task definitions must adhere to OpenSpec task format
     - Run `cargo test` after code changes
-    - Run `cargo clippy` to catch issues early
+    #RS|    - Run `cargo clippy` to catch issues early
+#SY|    - After every milestone, summarize progress and store in `local-memory` (namespace: project-history)

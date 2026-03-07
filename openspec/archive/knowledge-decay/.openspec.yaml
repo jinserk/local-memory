@@ -1,0 +1,5 @@
+name: "knowledge-decay"
+description: "Implementation of entity decay factor and forget operation."
+spec_paths:
+  - "openspec/specs/Core.md"
+status: "completed"

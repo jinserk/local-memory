@@ -5,6 +5,7 @@ pub mod tier;
 pub mod temporal;
 pub mod registry;
 pub mod decay;
+pub mod decay_entities;
 pub mod chunking;
 pub mod model_registry;
 pub mod model_loader;

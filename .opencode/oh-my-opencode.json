@@ -1,0 +1,14 @@
+{
+  "agents": {
+    "recaller": {
+      "model": "google/gemini-2.0-flash-exp",
+      "description": "Specialized agent for deep context retrieval from local-memory vector and graph database.",
+      "prompt": "{file:./.opencode/agents/recaller.md}",
+      "permissions": {
+        "read": true,
+        "write": false,
+        "bash": false
+      }
+    }
+  }
+}

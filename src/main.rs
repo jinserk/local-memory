@@ -7,6 +7,7 @@ use local_memory::engine::shell::spawn_shell_observer;
 use local_memory::engine::conversation::spawn_conversation_observer;
 use local_memory::engine::graph::spawn_graph_observer;
 use local_memory::engine::communities::spawn_community_service;
+use local_memory::engine::decay::spawn_decay_service;
 use local_memory::KnowledgeEvent;
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
@@ -78,6 +79,7 @@ async fn main() -> Result<()> {
         spawn_conversation_observer(context.clone()).await;
         spawn_graph_observer(context.clone(), event_tx.subscribe()).await;
         spawn_community_service(context.clone(), event_tx.subscribe()).await;
+        spawn_decay_service(context.clone()).await;
     }
 
     // 5. Idle Timeout Monitor

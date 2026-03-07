@@ -2,6 +2,8 @@
 
 A high-performance local GraphRAG (Graph Retrieval-Augmented Generation) system with MCP (Model Context Protocol) integration. Inspired by the **EdgeQuake** project and the **LightRAG** algorithm, this system extracts knowledge graphs from your documents to enable multi-hop reasoning and sophisticated memory retrieval, all running locally on your machine.
 
+A high-performance local GraphRAG (Graph Retrieval-Augmented Generation) system with MCP (Model Context Protocol) integration. Inspired by the **EdgeQuake** project and the **LightRAG** algorithm, this system extracts knowledge graphs from your documents to enable multi-hop reasoning and sophisticated memory retrieval, all running locally on your machine.
+
 ## Features
 
 - **GraphRAG Engine**: Beyond simple vector similarity, it extracts entities and relationships to build a structured Knowledge Graph.

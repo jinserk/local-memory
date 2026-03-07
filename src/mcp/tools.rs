@@ -82,6 +82,18 @@ pub fn list_tools() -> Value {
                 },
                 "required": ["entity_name"]
             }
+        },
+        {
+            "name": "forget",
+            "description": "Explicitly forget an entity, setting its decay factor to 0 and removing it",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_name": { "type": "string", "description": "The name of the entity to forget" },
+                    "namespace": { "type": "string", "description": "Optional namespace" }
+                },
+                "required": ["entity_name"]
+            }
         }
     ])
 }
@@ -146,6 +158,16 @@ pub async fn call_tool(name: &str, arguments: Value, context: &McpContext) -> Re
             let neighborhood = context.db.get_neighborhood_with_namespace(entity_name, namespace)?;
             Ok(json!({
                 "content": [{"type": "text", "text": serde_json::to_string_pretty(&neighborhood)?}]
+            }))
+        }
+        "forget" => {
+            let entity_name = arguments.get("entity_name").and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing 'entity_name' argument"))?;
+            let namespace = arguments.get("namespace").and_then(|v| v.as_str()).unwrap_or("default");
+
+            context.db.forget_entity(entity_name, namespace)?;
+            Ok(json!({
+                "content": [{"type": "text", "text": format!("Entity '{}' forgotten successfully.", entity_name)}]
             }))
         }
         _ => Err(anyhow!("Unknown tool: {}", name)),

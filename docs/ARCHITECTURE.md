@@ -76,6 +76,12 @@ To achieve sub-millisecond retrieval over thousands of documents, we use a tiere
 Unlike static databases, Local Memory tracks the evolution of facts:
 *   **Temporal Ingestion**: [IN PROGRESS] Tracks versioning so newer facts (e.g., today's weather) supersede historical ones.
 *   **Structured Extraction**: Uses `NuExtract` to turn natural language into JSON triples (`Source` -> `Predicate` -> `Target`).
+*   **Knowledge Decay & Forgetting**: To keep the graph relevant and prevent stale information from polluting retrieval, we implement a linear decay mechanism:
+    *   **Decay Factor**: Each entity starts with a `decay_factor` of 1.0.
+    *   **Daily Decay**: A background service reduces the factor daily, reaching 0.0 after 180 days (6 months) of inactivity.
+    *   **Recall & Survival**: Every time an entity is recalled (via search or exploration), its `decay_factor` resets to 1.0.
+    *   **Pruning**: Entities with a 0.0 factor are automatically removed along with their relationships and orphaned communities.
+    *   **Manual Forgetting**: The `forget` operation allows explicit removal of a fact by setting its decay factor to 0.0 immediately.
 
 ### 3. Unified Model Provider (`src/model/`)
 We use an **Asymmetric Model Factory**:

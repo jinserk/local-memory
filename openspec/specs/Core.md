@@ -10,15 +10,21 @@ Local Memory is a high-performance local GraphRAG (Graph Retrieval-Augmented Gen
 - **Vector Extension**: `sqlite-vec` (using `vec0` virtual tables)
 - **Schema**:
   - `documents`: Raw text, titles, and metadata.
-  - `entities`: Unique nodes (People, Organizations, Concepts, etc.).
-  - `relationships`: Directed edges (triplets) connecting entities.
-  - `vec_documents`: High-performance vector index for document embeddings.
+  - `entities`: Unique nodes with `decay_factor` and `last_recalled_at`.
+  - `relationships`: Directed edges connecting entities.
+  - `vec_documents`: Vector index for document embeddings.
+  - `communities`: Clustered entities with summaries.
 
 ### Engine Layer
+- **Knowledge Evolution**:
+  - **Decay Factor**: Linear decay of entity relevance (1.0 -> 0.0 over 180 days).
+  - **Recall**: Accessing an entity resets its decay factor to 1.0.
+  - **Pruning**: Automated 24-hour maintenance to remove zero-factor entities, relationships, and orphaned communities.
+  - **Ranking**: Entity listings and searches prioritize higher `decay_factor` for relevant results.
 - **Ingestion Pipeline**:
-  1. **Embedding**: Generate 768d vectors via Nomic Embed Text v1.5.
-  2. **KG Extraction**: LLM-powered extraction of nodes and edges via `edgequake-llm`.
-  3. **Atomic Commit**: Storing both vector and graph data in a single SQLite transaction.
+  1. **Embedding**: Generate vectors.
+  2. **KG Extraction**: Extract nodes and edges.
+  3. **Atomic Commit**: Storing data with initial `decay_factor`.
 - **Retrieval Pipeline (Hybrid Funnel)**:
   1. **Vector Search**: KNN search against document embeddings.
   2. **Graph Expansion**: Traversal of extracted entities to find related facts.
@@ -31,6 +37,7 @@ The system implements the Model Context Protocol (MCP) using JSON-RPC 2.0 over s
 - `memorize`: Ingests text and updates the Knowledge Graph.
 - `recall`: Performs hybrid retrieval for a given query.
 - `explore`: Explores connections for a specific entity.
+- `forget`: Resets an entity's decay factor to 0.0 for subsequent pruning.
 
 ## 4. CLI Interface (lmcli)
 A diagnostic and exploration tool for the local database.

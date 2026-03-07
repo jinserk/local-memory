@@ -29,6 +29,7 @@ impl SqliteDatabase {
         
         // Enable WAL mode for better concurrency
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
 
         let db = Self { conn: Mutex::new(conn), dimension };
         db.initialize()?;
@@ -69,6 +70,8 @@ impl SqliteDatabase {
                 is_latest INTEGER DEFAULT 1,
                 namespace TEXT DEFAULT 'default',
                 community_id TEXT,
+                decay_factor REAL DEFAULT 1.0,
+                last_recalled_at INTEGER,
                 UNIQUE(name, type, namespace, version)
             )", 
             []
@@ -137,8 +140,20 @@ impl SqliteDatabase {
                 }
             }
 
-            if table == "entities" && !columns.contains(&"community_id".to_string()) {
-                conn.execute("ALTER TABLE entities ADD COLUMN community_id TEXT", [])?;
+            if table == "entities" {
+                if !columns.contains(&"community_id".to_string()) {
+                    conn.execute("ALTER TABLE entities ADD COLUMN community_id TEXT", [])?;
+                }
+                if !columns.contains(&"decay_factor".to_string()) {
+                    conn.execute("ALTER TABLE entities ADD COLUMN decay_factor REAL DEFAULT 1.0", [])?;
+                }
+                if !columns.contains(&"last_recalled_at".to_string()) {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    conn.execute(&format!("ALTER TABLE entities ADD COLUMN last_recalled_at INTEGER DEFAULT {}", now), [])?;
+                }
             }
 
             if table == "documents" {
@@ -300,9 +315,13 @@ impl SqliteDatabase {
         };
 
         let id = Uuid::new_v4();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
         conn.execute(
-            "INSERT INTO entities (id, name, type, description, metadata, namespace, version, is_latest) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-            params![id.to_string(), name, entity_type, description, "{}", namespace, version],
+            "INSERT INTO entities (id, name, type, description, metadata, namespace, version, is_latest, last_recalled_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            params![id.to_string(), name, entity_type, description, "{}", namespace, version, now],
         )?;
         Ok(id)
     }
@@ -316,10 +335,73 @@ impl SqliteDatabase {
             let id = Uuid::parse_str(&id_str)?;
             let entity_type: String = row.get(1)?;
             let description: String = row.get(2)?;
+            
+            // Recall entity
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            conn.execute(
+                "UPDATE entities SET decay_factor = 1.0, last_recalled_at = ? WHERE id = ?",
+                params![now, id_str],
+            )?;
+            
             Ok(Some((id, entity_type, description)))
         } else {
             Ok(None)
         }
+    }
+
+    pub fn recall_entity(&self, id: Uuid) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        conn.execute(
+            "UPDATE entities SET decay_factor = 1.0, last_recalled_at = ? WHERE id = ?",
+            params![now, id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn forget_entity(&self, name: &str, namespace: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        conn.execute(
+            "UPDATE entities SET decay_factor = 0.0 WHERE name = ? AND namespace = ?",
+            params![name, namespace],
+        )?;
+        Ok(())
+    }
+
+    pub fn process_decay(&self) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let decay_period: f64 = 180.0 * 24.0 * 3600.0;
+
+        // 1. Update decay factor for all entities that are NOT already zero
+        conn.execute(
+            "UPDATE entities SET decay_factor = MAX(0.0, 1.0 - (CAST(? - last_recalled_at AS REAL) / ?)) WHERE decay_factor > 0.0",
+            params![now, decay_period],
+        )?;
+
+        // 2. Cleanup relationships for entities about to be deleted
+        conn.execute(
+            "DELETE FROM relationships WHERE source_id IN (SELECT id FROM entities WHERE decay_factor <= 0.0) 
+             OR target_id IN (SELECT id FROM entities WHERE decay_factor <= 0.0)",
+            []
+        )?;
+
+        // 3. Remove entities with 0 decay factor
+        conn.execute("DELETE FROM entities WHERE decay_factor <= 0.0", [])?;
+
+        // 4. Cleanup orphaned communities (those with no entities pointing to them)
+        conn.execute(
+            "DELETE FROM communities WHERE id NOT IN (SELECT DISTINCT community_id FROM entities WHERE community_id IS NOT NULL)",
+            []
+        )?;
+
+        Ok(())
     }
 
     pub fn insert_relationship(&self, source_id: Uuid, target_id: Uuid, predicate: &str, description: &str) -> Result<()> {
@@ -347,13 +429,13 @@ impl SqliteDatabase {
 
     pub fn count_entities(&self) -> Result<i64> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
-        let count: i64 = conn.query_row("SELECT count(*) FROM entities WHERE is_latest = 1", [], |r| r.get(0))?;
+        let count: i64 = conn.query_row("SELECT count(*) FROM entities WHERE is_latest = 1 AND decay_factor > 0.0", [], |r| r.get(0))?;
         Ok(count)
     }
 
     pub fn list_entities(&self, limit: usize) -> Result<Vec<(String, String, String)>> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
-        let mut stmt = conn.prepare("SELECT name, type, description FROM entities WHERE is_latest = 1 LIMIT ?")?;
+        let mut stmt = conn.prepare("SELECT name, type, description FROM entities WHERE is_latest = 1 AND decay_factor > 0.0 ORDER BY decay_factor DESC LIMIT ?")?;
         let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         let mut results = Vec::new();
         for row in rows { results.push(row?); }
@@ -366,7 +448,9 @@ impl SqliteDatabase {
             "SELECT e1.name, r.predicate, e2.name FROM relationships r 
              JOIN entities e1 ON r.source_id = e1.id 
              JOIN entities e2 ON r.target_id = e2.id 
-             WHERE e1.is_latest = 1 AND e2.is_latest = 1 LIMIT ?"
+             WHERE e1.is_latest = 1 AND e2.is_latest = 1 
+             AND e1.decay_factor > 0.0 AND e2.decay_factor > 0.0 
+             LIMIT ?"
         )?;
         let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         let mut results = Vec::new();
@@ -388,7 +472,11 @@ impl SqliteDatabase {
 
     pub fn list_all_relationships(&self) -> Result<Vec<(Uuid, Uuid, String)>> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
-        let mut stmt = conn.prepare("SELECT source_id, target_id, predicate FROM relationships")?;
+        let mut stmt = conn.prepare(
+            "SELECT source_id, target_id, predicate FROM relationships 
+             WHERE source_id IN (SELECT id FROM entities WHERE decay_factor > 0.0) 
+             AND target_id IN (SELECT id FROM entities WHERE decay_factor > 0.0)"
+        )?;
         let rows = stmt.query_map([], |row| {
             let s: String = row.get(0)?;
             let t: String = row.get(1)?;
@@ -406,13 +494,13 @@ impl SqliteDatabase {
     // NEW HELPER METHODS FOR SIDE CARS & CLI
     pub fn get_entity_community_id(&self, entity_id: Uuid) -> Result<Option<String>> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
-        let comm_id: Option<String> = conn.query_row("SELECT community_id FROM entities WHERE id = ?", params![entity_id.to_string()], |r| r.get(0)).ok();
+        let comm_id: Option<String> = conn.query_row("SELECT community_id FROM entities WHERE id = ? AND decay_factor > 0.0", params![entity_id.to_string()], |r| r.get(0)).ok();
         Ok(comm_id)
     }
 
     pub fn list_community_members(&self, comm_id: &str) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
-        let mut stmt = conn.prepare("SELECT name, description FROM entities WHERE community_id = ? AND is_latest = 1")?;
+        let mut stmt = conn.prepare("SELECT name, description FROM entities WHERE community_id = ? AND is_latest = 1 AND decay_factor > 0.0 ORDER BY decay_factor DESC")?;
         let rows = stmt.query_map([comm_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let mut results = Vec::new();
         for row in rows { results.push(row?); }
@@ -440,13 +528,24 @@ impl SqliteDatabase {
 
     #[allow(clippy::type_complexity)]
     pub fn list_entities_full(&self, limit: usize) -> Result<Vec<(String, String, Option<String>, String)>> {
-
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
-        let mut stmt = conn.prepare("SELECT name, type, community_id, description FROM entities WHERE is_latest = 1 LIMIT ?")?;
+        let mut stmt = conn.prepare("SELECT name, type, community_id, description FROM entities WHERE is_latest = 1 AND decay_factor > 0.0 ORDER BY decay_factor DESC LIMIT ?")?;
         let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
         let mut results = Vec::new();
         for row in rows { results.push(row?); }
         Ok(results)
+    }
+
+    pub fn set_entity_last_recalled_at_for_testing(&self, id: Uuid, timestamp: u64) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        conn.execute("UPDATE entities SET last_recalled_at = ? WHERE id = ?", params![timestamp, id.to_string()])?;
+        Ok(())
+    }
+
+    pub fn get_entity_decay_factor_for_testing(&self, id: Uuid) -> Result<f64> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Mutex error: {}", e))?;
+        let factor: f64 = conn.query_row("SELECT decay_factor FROM entities WHERE id = ?", params![id.to_string()], |r| r.get(0))?;
+        Ok(factor)
     }
 }
 
