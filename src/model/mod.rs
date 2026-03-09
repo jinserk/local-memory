@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 use edgequake_llm::{LLMProvider, OpenAIProvider, OllamaProvider, EmbeddingProvider};
 use crate::config::{Config, ExtractorProvider, ModelProvider};
 use anyhow::Result;
@@ -64,6 +65,164 @@ impl EmbeddingProvider for GeminiEmbeddingProvider {
         }
         
         Ok(results)
+    }
+}
+
+use edgequake_llm::{ChatMessage, CompletionOptions, LLMResponse};
+
+struct GeminiLLMProvider {
+    api_key: String,
+    model: String,
+}
+
+#[async_trait]
+impl LLMProvider for GeminiLLMProvider {
+    fn name(&self) -> &str { "gemini" }
+    fn model(&self) -> &str { &self.model }
+    fn max_context_length(&self) -> usize { 1048576 } // 1M tokens for Gemini 1.5/2.0
+    async fn complete(&self, prompt: &str) -> Result<LLMResponse, LlmError> {
+        self.complete_with_options(prompt, &CompletionOptions::default()).await
+    }
+    async fn complete_with_options(&self, prompt: &str, _options: &CompletionOptions) -> Result<LLMResponse, LlmError> {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.api_key
+        );
+
+        let resp = client.post(&url)
+            .json(&serde_json::json!({
+                "contents": [{ "parts": [{ "text": prompt }] }]
+            }))
+            .send()
+            .await
+            .map_err(|e| LlmError::Unknown(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let err_body = resp.text().await.unwrap_or_else(|e| e.to_string());
+            return Err(LlmError::Unknown(format!("Gemini API error: {}", err_body)));
+        }
+
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| LlmError::Unknown(format!("Failed to parse Gemini response: {}", e)))?;
+
+        let text = body["candidates"][0]["content"]["parts"][0]["text"].as_str()
+            .ok_or_else(|| LlmError::Unknown("Missing 'text' in Gemini response".to_string()))?
+            .to_string();
+
+        let prompt_tokens = body["usageMetadata"]["promptTokenCount"].as_u64().unwrap_or(0) as usize;
+        let completion_tokens = body["usageMetadata"]["candidatesTokenCount"].as_u64().unwrap_or(0) as usize;
+        let total_tokens = body["usageMetadata"]["totalTokenCount"].as_u64().unwrap_or(0) as usize;
+
+        let mut metadata = HashMap::new();
+        metadata.insert("raw_response".to_string(), body);
+
+        Ok(LLMResponse {
+            content: text,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            model: self.model.clone(),
+            finish_reason: Some("stop".to_string()),
+            tool_calls: Vec::new(),
+            metadata,
+            cache_hit_tokens: None,
+            thinking_tokens: None,
+            thinking_content: None,
+        })
+    }
+    async fn chat(&self, messages: &[ChatMessage], options: Option<&CompletionOptions>) -> Result<LLMResponse, LlmError> {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.api_key
+        );
+
+        let mut contents = Vec::new();
+        for msg in messages {
+            use edgequake_llm::ChatRole;
+            let role = match msg.role {
+                ChatRole::User => "user",
+                ChatRole::Assistant => "model",
+                ChatRole::System => "user", 
+                _ => "user",
+            };
+
+            let mut parts = Vec::new();
+            if !msg.content.is_empty() {
+                parts.push(serde_json::json!({ "text": msg.content }));
+            }
+
+            if let Some(images) = &msg.images {
+                for img in images {
+                    parts.push(serde_json::json!({
+                        "inline_data": {
+                            "mime_type": img.mime_type,
+                            "data": img.data
+                        }
+                    }));
+                }
+            }
+
+            if !parts.is_empty() {
+                contents.push(serde_json::json!({
+                    "role": role,
+                    "parts": parts
+                }));
+            }
+        }
+
+        let mut body_json = serde_json::json!({
+            "contents": contents,
+        });
+
+        if let Some(opts) = options {
+            let mut config = serde_json::json!({});
+            if let Some(t) = opts.temperature { config["temperature"] = serde_json::json!(t); }
+            if let Some(m) = opts.max_tokens { config["maxOutputTokens"] = serde_json::json!(m); }
+            body_json["generationConfig"] = config;
+        }
+
+        eprintln!("DEBUG: [Gemini chat] Requesting: {}", url);
+
+        let resp = client.post(&url)
+            .json(&body_json)
+            .send()
+            .await
+            .map_err(|e| LlmError::Unknown(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let err_body = resp.text().await.unwrap_or_else(|e| e.to_string());
+            return Err(LlmError::Unknown(format!("Gemini API error: {}", err_body)));
+        }
+
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| LlmError::Unknown(format!("Failed to parse Gemini response: {}", e)))?;
+
+        let text = body["candidates"][0]["content"]["parts"][0]["text"].as_str()
+            .ok_or_else(|| LlmError::Unknown("Missing 'text' in Gemini response".to_string()))?
+            .to_string();
+
+        let prompt_tokens = body["usageMetadata"]["promptTokenCount"].as_u64().unwrap_or(0) as usize;
+        let completion_tokens = body["usageMetadata"]["candidatesTokenCount"].as_u64().unwrap_or(0) as usize;
+        let total_tokens = body["usageMetadata"]["totalTokenCount"].as_u64().unwrap_or(0) as usize;
+
+        let mut metadata = HashMap::new();
+        metadata.insert("raw_response".to_string(), body);
+
+        Ok(LLMResponse {
+            content: text,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            model: self.model.clone(),
+            finish_reason: Some("stop".to_string()),
+            tool_calls: Vec::new(),
+            metadata,
+            cache_hit_tokens: None,
+            thinking_tokens: None,
+            thinking_content: None,
+        })
     }
 }
 
@@ -152,6 +311,7 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
 
     // 2. Resolve LLM Extractor
     let llm: Arc<dyn LLMProvider> = if let Some(ext_config) = &config.llm_extractor {
+        eprintln!("DEBUG: Resolving LLM: {:?} ({})", ext_config.provider, ext_config.name);
         match ext_config.provider {
             ExtractorProvider::Ollama => {
                 let host = ext_config
@@ -190,13 +350,21 @@ pub async fn get_unified_model(config: &Config) -> Result<Arc<dyn UnifiedModel>>
                     .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
                     .or_else(|| auth::get_google_token())
                     .ok_or_else(|| anyhow::anyhow!("Missing Google API key for Gemini LLM. (Checked config api_key, GOOGLE_API_KEY, and OpenCode auth.json)"))?;
-                let base_url = ext_config
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai".to_string());
-                Arc::new(
-                    OpenAIProvider::compatible(api_key, base_url).with_model(&ext_config.name),
-                )
+                
+                if api_key.starts_with("AIza") {
+                    Arc::new(GeminiLLMProvider {
+                        api_key,
+                        model: ext_config.name.clone(),
+                    })
+                } else {
+                    let base_url = ext_config
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai".to_string());
+                    Arc::new(
+                        OpenAIProvider::compatible(api_key, base_url).with_model(&ext_config.name),
+                    )
+                }
             }
             ExtractorProvider::HuggingFace => {
                 let p = CandleProvider::load(
@@ -268,6 +436,13 @@ pub fn get_llm_provider(config: &Config) -> Option<Arc<dyn LLMProvider + Send + 
                     Some(k) => k,
                     None => return None,
                 };
+
+                if key.starts_with("AIza") {
+                    return Some(Arc::new(GeminiLLMProvider {
+                        api_key: key,
+                        model: ext_config.name.clone(),
+                    }));
+                }
 
                 let base_url = ext_config
                     .base_url

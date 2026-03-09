@@ -2,7 +2,6 @@ use crate::storage::sqlite::SqliteDatabase;
 use crate::engine::vectors::{encode_bq, slice_vector};
 use crate::KnowledgeEvent;
 use anyhow::Result;
-use kreuzberg;
 use std::sync::Arc;
 use uuid::Uuid;
 use edgequake_llm::{LLMProvider, EmbeddingProvider};
@@ -42,26 +41,40 @@ impl IngestionPipeline {
     }
 
     pub async fn run_file(&self, path: &Path, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {
-        eprintln!("DEBUG: Extracting content from {:?}", path);
+        eprintln!("DEBUG: [run_file] path={:?}, namespace={}", path, namespace);
         
-        let config = kreuzberg::ExtractionConfig::default();
-        let result = kreuzberg::extract_file(path, None, &config).await
-            .map_err(|e| anyhow::anyhow!("Extraction failed for {:?}: {}", path, e))?;
+        let content = if path.extension().and_then(|s| s.to_str()) == Some("pdf") {
+            if let Some(llm) = &self.llm {
+                eprintln!("DEBUG: [run_file] PDF conversion starting with provider: {} ({})", llm.name(), llm.model());
+                let config = edgequake_pdf2md::ConversionConfig::builder()
+                    .provider(llm.clone())
+                    .build()
+                    .map_err(|e| anyhow::anyhow!("Failed to build PDF config: {}", e))?;
+                
+                let output = edgequake_pdf2md::convert(path.to_string_lossy().as_ref(), &config).await
+                    .map_err(|e| anyhow::anyhow!("PDF conversion failed for {:?}: {}", path, e))?;
+                eprintln!("DEBUG: [run_file] PDF conversion complete. Pages processed: {}", output.stats.total_pages);
+                output.markdown
+            } else {
+                anyhow::bail!("LLM required for PDF extraction via edgequake-pdf2md");
+            }
+        } else {
+            // Fallback for non-PDF files: try reading as plain text
+            std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("Failed to read file as text {:?}: {}", path, e))?
+        };
 
-        eprintln!("DEBUG: Document content extracted ({})", result.mime_type);
+        eprintln!("DEBUG: Document content extracted ({} chars)", content.len());
 
         let mut file_metadata = metadata.clone();
         if let Some(obj) = file_metadata.as_object_mut() {
             obj.insert("source_file".to_string(), json!(path.to_string_lossy()));
-            if let Some(title) = &result.metadata.title {
-                obj.insert("title".to_string(), json!(title));
-            } else if !obj.contains_key("title") {
+            if !obj.contains_key("title") {
                 obj.insert("title".to_string(), json!(path.file_name().unwrap_or_default().to_string_lossy()));
             }
-            obj.insert("mime_type".to_string(), json!(result.mime_type));
         }
 
-        self.run_with_namespace(&result.content, file_metadata, namespace).await
+        self.run_with_namespace(&content, file_metadata, namespace).await
     }
 
     pub async fn run_image(&self, path: &Path, metadata: serde_json::Value, namespace: &str) -> Result<Uuid> {

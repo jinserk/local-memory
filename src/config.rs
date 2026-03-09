@@ -190,6 +190,7 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Self {
+        eprintln!("DEBUG: Config::load calling...");
         let config_path = if let Ok(p) = env::var("LOCAL_MEMORY_CONFIG") {
             PathBuf::from(p)
         } else {
@@ -209,6 +210,9 @@ impl Config {
                     match serde_json::from_str::<Config>(&content) {
                         Ok(config) => {
                             eprintln!("DEBUG: Config loaded successfully from {}", config_path.display());
+                            if let Some(ext) = &config.llm_extractor {
+                                eprintln!("DEBUG: Loaded extractor: {:?} ({})", ext.provider, ext.name);
+                            }
                             return config;
                         },
                         Err(e) => eprintln!("  ! Warning: Failed to parse config file at {}: {}", config_path.display(), e),

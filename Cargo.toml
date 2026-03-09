@@ -25,14 +25,12 @@ reqwest = { version = "0.12", features = ["blocking"] }
 indicatif = "0.17"
 rusqlite = { version = "0.32", features = ["bundled"] }
 sqlite-vec = "0.1.0"
-edgequake-llm = "0.2.1"
+edgequake-llm = "0.3.0"
 zerocopy = { version = "0.8", features = ["derive"] }
 async-trait = "0.1.80"
 futures-util = "0.3.31"
-ocrs = "0.1.0"
-image = "0.25.5"
 petgraph = "0.7.1"
-kreuzberg = { version = "4.4", features = ["pdf", "ocr"] }
+edgequake-pdf2md = "0.7.0"
 
 [dev-dependencies]
 tempfile = "3.17.1"

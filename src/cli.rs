@@ -160,6 +160,7 @@ struct StatsRow {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
+    eprintln!("DEBUG: cli::run start");
     let config = Config::load();
 
     match cli.command {
