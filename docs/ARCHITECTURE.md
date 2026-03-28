@@ -19,8 +19,8 @@ Local Memory operates as a local-first, zero-latency sidecar for AI agents. It c
 |                         MCP Server Layer                        |
 |  +----------------------------------------------------------+   |
 |  |                    MCP Tools & Resources                  |   |
-|  |    - memory_insert           - memory_search              |   |
-|  |    - graph_get_neighborhood  - [FUTURE] context_resource  |   |
+|  |    - memorize           - recall              |   |
+|  |    - explore  - [FUTURE] context_resource  |   |
 |  +----------------------------------------------------------+   |
 +-----------------------------+-----------------------------------+
                               |
@@ -90,8 +90,8 @@ We use an **Asymmetric Model Factory**:
 
 ## Data Lifecycle
 
-1.  **Ingest**: Raw text is passed to `memory_insert`.
+1.  **Ingest**: Raw text is passed to `memorize`.
 2.  **Embed**: The text is prefixed with `search_document: ` and vectorized.
 3.  **Extract**: The model identifies entities (e.g., `Boston`) and links (e.g., `IN` -> `Massachusetts`).
 4.  **Store**: All data is committed to a single SQLite file, including 3 tiers of vectors.
-5.  **Retrieve**: `memory_search` query is prefixed with `search_query: `, run through the funnel, and returned with Graph context.
+5.  **Retrieve**: `recall` query is prefixed with `search_query: `, run through the funnel, and returned with Graph context.
